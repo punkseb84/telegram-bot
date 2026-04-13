@@ -22,7 +22,7 @@ TAKE_PROFIT = 5
 
 selected_matches = []
 matches_state = {}
-last_day = None
+last_day_sent = None
 
 # 🎯 10 campionati
 ALL_LEAGUES = [39,140,135,78,61,88,94,144,203,207]
@@ -49,6 +49,19 @@ def calcola_stake(prob):
         return round(bankroll * 0.007, 2)
     return 0
 
+# 📲 COMANDI
+@bot.message_handler(commands=['status'])
+def status(msg):
+    bot.reply_to(msg, f"📊 Giocate: {giocate}\n💰 Profit: {profit}\n🏦 Bankroll: {bankroll}")
+
+@bot.message_handler(commands=['reset'])
+def reset(msg):
+    global profit, giocate, bankroll
+    profit = 0
+    giocate = 0
+    bankroll = 100
+    bot.reply_to(msg, "♻️ Reset completato")
+
 # 🧠 AUTO FILTRO CAMPIONATI
 def filtra_campionati():
     today = datetime.now().strftime("%Y-%m-%d")
@@ -60,29 +73,28 @@ def filtra_campionati():
     except:
         return ALL_LEAGUES
 
-    league_stats = {}
+    stats = {}
 
     for m in data.get("response", []):
         league = m["league"]["id"]
-
         if league not in ALL_LEAGUES:
             continue
 
         goals = (m["goals"]["home"] or 0) + (m["goals"]["away"] or 0)
 
-        if league not in league_stats:
-            league_stats[league] = {"matches":0,"goals":0}
+        if league not in stats:
+            stats[league] = {"matches":0, "goals":0}
 
-        league_stats[league]["matches"] += 1
-        league_stats[league]["goals"] += goals
+        stats[league]["matches"] += 1
+        stats[league]["goals"] += goals
 
     migliori = []
 
-    for l, stats in league_stats.items():
-        if stats["matches"] < 3:
+    for l, s in stats.items():
+        if s["matches"] < 3:
             continue
 
-        media = stats["goals"] / stats["matches"]
+        media = s["goals"] / s["matches"]
 
         if media >= 2.2:
             migliori.append(l)
@@ -92,7 +104,7 @@ def filtra_campionati():
 
     return migliori
 
-# 📅 selezione partite
+# 📅 SELEZIONE PARTITE
 def seleziona_partite():
     global selected_matches
 
@@ -121,15 +133,14 @@ def seleziona_partite():
 
     selected_matches = matches[:3]
 
-    msg = "📅 STRATEGIA + AUTO FILTRO\n\n"
-
+    msg = "📅 STRATEGIA GIORNALIERA ORE 11:30\n\n"
     msg += f"Campionati attivi: {len(leagues)}\n\n"
 
     for i, m in enumerate(selected_matches):
         msg += f"""{i+1}) {m['home']} - {m['away']}
 
-👉 Over 0.5 HT
-👉 Se 0-0 → Over 1.5 2T
+👉 Over 0.5 Primo Tempo
+👉 Se 0-0 → Over 1.5 Secondo Tempo
 
 \n"""
 
@@ -140,11 +151,11 @@ def check_matches():
     global giocate, profit, bankroll
 
     if profit <= STOP_LOSS:
-        send("🛑 STOP LOSS")
+        send("🛑 STOP LOSS raggiunto")
         return
 
     if profit >= TAKE_PROFIT:
-        send("🎯 TAKE PROFIT")
+        send("🎯 TAKE PROFIT raggiunto")
         return
 
     if giocate >= max_giocate:
@@ -186,14 +197,15 @@ def check_matches():
 
         state = matches_state[fid]
 
+        # ❌ partita morta
         if minute == 45 and goals == 0 and tiri < 6:
-            send(f"❌ {home}-{away} NO BET")
+            send(f"❌ {home}-{away} → NO BET")
             continue
 
+        # 🔥 ingresso
         if 50 <= minute <= 60 and not state["entered"]:
 
             stake = calcola_stake(prob)
-
             if stake == 0:
                 continue
 
@@ -204,13 +216,15 @@ def check_matches():
 
 ⏱ {minute}'
 📈 xG: {xg}
-🤖 Prob: {prob}%
+🤖 Probabilità: {prob}%
 
-👉 Over 1.5 Secondo Tempo
+👉 GIOCA:
+Over 1.5 Secondo Tempo
 
 💰 Stake: {stake}
 """)
 
+        # 📊 risultato
         if state["entered"] and minute >= 90:
 
             stake = calcola_stake(prob)
@@ -237,17 +251,20 @@ def check_matches():
 
 # 🔁 LOOP
 def loop_live():
-    global last_day
+    global last_day_sent
 
     while True:
-        today = datetime.now().strftime("%Y-%m-%d")
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
 
-        if last_day != today:
+        # ⏰ INVIO ALLE 11:30
+        if now.hour == 11 and now.minute == 30 and last_day_sent != today:
             seleziona_partite()
-            last_day = today
+            last_day_sent = today
 
         check_matches()
         time.sleep(60)
 
+# ▶️ AVVIO
 threading.Thread(target=loop_live).start()
 bot.infinity_polling()
