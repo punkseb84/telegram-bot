@@ -1,12 +1,15 @@
 import telebot
 import os
+import time
 
-TELEGRAM_TOKEN = os.getenv("8609230078:AAFCoriuwxzpAheNQMKZWZYbttR7aD_NUk")
-CHAT_ID = int(os.getenv("168842957"))
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = int(os.getenv("CHAT_ID"))
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
+# INVIA SUBITO MESSAGGIO
 bot.send_message(CHAT_ID, "✅ TEST OK - BOT FUNZIONA")
 
+# Mantiene il bot vivo (ma non blocca subito)
 while True:
-    pass
+    time.sleep(10)
