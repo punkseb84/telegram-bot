@@ -2,7 +2,6 @@ import telebot
 import os
 import time
 import requests
-from datetime import datetime
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
@@ -10,186 +9,165 @@ API_KEY = os.getenv("API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# 📊 STATS
 profit = 0
 giocate = 0
-partite_giocate = {}
+matches_state = {}
 
 LEAGUES_ALLOWED = [39, 140, 135, 78, 61]
 
-def send_message(msg):
+def send(msg):
     bot.send_message(CHAT_ID, msg)
 
-# 🧠 xG stimato
+# 🧠 xG
 def calcola_xg(tiri, in_porta):
-    return round((tiri * 0.05) + (in_porta * 0.15), 2)
+    return (tiri * 0.05) + (in_porta * 0.15)
 
-# 🤖 PROBABILITÀ GOL (AI PREDITTIVA)
-def probabilita_goal(xg):
-    if xg >= 1.5:
-        return 80
-    elif xg >= 1.2:
-        return 70
-    elif xg >= 1.0:
-        return 60
-    elif xg >= 0.8:
-        return 50
-    else:
-        return 30
+# 🤖 probabilità
+def prob_goal(xg):
+    if xg >= 1.5: return 80
+    if xg >= 1.2: return 70
+    if xg >= 1.0: return 60
+    if xg >= 0.8: return 50
+    return 30
 
-# 🧠 SCORE AVANZATO
-def calcola_score(tiri, in_porta, corner):
-    xg = calcola_xg(tiri, in_porta)
-    prob = probabilita_goal(xg)
-
-    score = 0
-
-    if prob >= 70:
-        score += 3
-    elif prob >= 50:
-        score += 2
-    elif prob >= 40:
-        score += 1
-
-    if corner >= 5:
-        score += 1
-
-    return score, xg, prob
-
-# 📲 COMANDI TELEGRAM
-@bot.message_handler(commands=['start'])
-def start(msg):
-    bot.reply_to(msg, "🤖 Bot attivo\nComandi: /status /profit /giocate")
-
+# 📲 COMANDI
 @bot.message_handler(commands=['profit'])
-def profit_cmd(msg):
+def cmd_profit(msg):
     bot.reply_to(msg, f"💰 Profit: {profit}u")
 
-@bot.message_handler(commands=['giocate'])
-def giocate_cmd(msg):
-    bot.reply_to(msg, f"📊 Giocate: {giocate}")
-
 @bot.message_handler(commands=['status'])
-def status_cmd(msg):
-    bot.reply_to(msg, f"📊 Stato\nGiocate: {giocate}\nProfit: {profit}u")
+def cmd_status(msg):
+    bot.reply_to(msg, f"📊 Giocate: {giocate}\n💰 Profit: {profit}u")
 
-@bot.message_handler(commands=['reset'])
-def reset_cmd(msg):
-    global profit, giocate
-    profit = 0
-    giocate = 0
-    bot.reply_to(msg, "♻️ Reset completato")
-
-# 🔴 LIVE ANALYSIS
+# 🔴 LIVE
 def check_matches():
-    global giocate
+    global giocate, profit
 
     url = "https://v3.football.api-sports.io/fixtures?live=all"
     headers = {"x-apisports-key": API_KEY}
 
     try:
-        res = requests.get(url, headers=headers).json()
+        data = requests.get(url, headers=headers).json()
     except:
         return
 
-    for match in res.get("response", []):
-        league_id = match["league"]["id"]
-
-        if league_id not in LEAGUES_ALLOWED:
+    for m in data.get("response", []):
+        league = m["league"]["id"]
+        if league not in LEAGUES_ALLOWED:
             continue
 
-        fixture_id = match["fixture"]["id"]
-        minuto = match["fixture"]["status"]["elapsed"]
+        fid = m["fixture"]["id"]
+        minute = m["fixture"]["status"]["elapsed"]
 
-        if fixture_id in partite_giocate:
+        home = m["teams"]["home"]["name"]
+        away = m["teams"]["away"]["name"]
+
+        goals = (m["goals"]["home"] or 0) + (m["goals"]["away"] or 0)
+
+        try:
+            stats = m["statistics"][0]
+            tiri = stats["shots"]["total"] or 0
+            in_porta = stats["shots"]["on"] or 0
+            corner = stats["corners"] or 0
+        except:
             continue
 
-        if minuto == 45 and match["goals"]["home"] == 0 and match["goals"]["away"] == 0:
+        xg = round(calcola_xg(tiri, in_porta), 2)
+        prob = prob_goal(xg)
 
-            try:
-                stats = match["statistics"][0]
-                tiri = stats["shots"]["total"] or 0
-                in_porta = stats["shots"]["on"] or 0
-                corner = stats["corners"] or 0
-            except:
-                continue
+        if fid not in matches_state:
+            matches_state[fid] = {
+                "sent": False,
+                "entered": False,
+                "last_xg": xg,
+                "home": home,
+                "away": away,
+                "stake": 0
+            }
 
-            if tiri < 6:
-                continue
+        state = matches_state[fid]
 
-            score, xg, prob = calcola_score(tiri, in_porta, corner)
+        # 🚫 partita morta
+        if minute == 45 and goals == 0 and tiri < 6:
+            send(f"❌ {home}-{away}\nPartita lenta → NO BET")
+            state["sent"] = True
+            continue
+
+        # 🔥 ENTRY TIMING (50-60)
+        if 50 <= minute <= 60 and not state["entered"]:
 
             if prob >= 70:
                 stake = 1.5
-                segnale = "🟢 FORTE"
+                segnale = "🟢 ENTRA ORA"
             elif prob >= 50:
                 stake = 0.7
-                segnale = "🟡 MEDIO"
+                segnale = "🟡 ENTRA RIDOTTO"
             else:
                 continue
 
             giocate += 1
+            state["entered"] = True
+            state["stake"] = stake
 
-            partite_giocate[fixture_id] = {
-                "stake": stake,
-                "home": match["teams"]["home"]["name"],
-                "away": match["teams"]["away"]["name"]
-            }
+            send(f"""⚽ {home}-{away}
 
-            send_message(f"""⚽ {partite_giocate[fixture_id]['home']} - {partite_giocate[fixture_id]['away']}
-
-📊 Tiri: {tiri}
-🎯 In porta: {in_porta}
-🚩 Corner: {corner}
-
+⏱ {minute}'
 📈 xG: {xg}
-🤖 Probabilità gol: {prob}%
+🤖 Prob: {prob}%
 
-🎯 Segnale: {segnale}
+🔥 {segnale}
 💰 Stake: {stake}u
 """)
 
-# 📊 RISULTATI
-def check_results():
-    global profit
+        # 🔄 UPDATE DINAMICO
+        if state["entered"] and xg > state["last_xg"] + 0.3:
+            send(f"""📈 UPDATE
 
-    url = "https://v3.football.api-sports.io/fixtures?live=all"
-    headers = {"x-apisports-key": API_KEY}
+{home}-{away}
+xG in crescita: {state['last_xg']} → {xg}
 
-    try:
-        res = requests.get(url, headers=headers).json()
-    except:
-        return
+🔥 partita si accende
+""")
+            state["last_xg"] = xg
 
-    for match in res.get("response", []):
-        fixture_id = match["fixture"]["id"]
+        # ⚠️ rischio
+        if state["entered"] and minute > 70 and xg < 0.8:
+            send(f"""⚠️ ATTENZIONE
 
-        if fixture_id not in partite_giocate:
-            continue
-
-        if match["fixture"]["status"]["elapsed"] >= 90:
-
-            goals = match["goals"]["home"] + match["goals"]["away"]
-            stake = partite_giocate[fixture_id]["stake"]
-
-            if goals >= 2:
-                profit += stake
-                result = "✅ WIN"
-            else:
-                profit -= stake
-                result = "❌ LOSS"
-
-            send_message(f"""📊 RISULTATO
-⚽ {partite_giocate[fixture_id]['home']} - {partite_giocate[fixture_id]['away']}
-
-{result}
-💰 Profit totale: {profit}u
+{home}-{away}
+ritmo basso → rischio alto
 """)
 
-            del partite_giocate[fixture_id]
+        # ⚽ GOL
+        if state["entered"] and goals >= 1:
+            send(f"""⚽ GOL!
 
-# ⏱ LOOP
+{home}-{away}
+
+👉 valuta cashout o lascia correre
+""")
+            state["entered"] = False
+
+        # 📊 RISULTATO
+        if minute >= 90 and state["stake"] > 0:
+
+            if goals >= 2:
+                profit += state["stake"]
+                result = "✅ WIN"
+            else:
+                profit -= state["stake"]
+                result = "❌ LOSS"
+
+            send(f"""📊 RISULTATO
+
+{home}-{away}
+{result}
+
+💰 Profit: {profit}u
+""")
+
+            del matches_state[fid]
+
 while True:
     check_matches()
-    check_results()
     time.sleep(60)
