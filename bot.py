@@ -2,8 +2,8 @@ import telebot
 import os
 
 # Prende le variabili da Railway
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("8609230078:AAFCoriuwxzpAheNQMKZWZYbttR7aD_NUk")
+CHAT_ID = os.getenv("168842957")
 
 # Crea il bot
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
