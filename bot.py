@@ -4,7 +4,7 @@ import time
 import requests
 import threading
 from datetime import datetime
-import pytz
+from zoneinfo import ZoneInfo
 
 # 🔑 CONFIG
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -13,8 +13,8 @@ API_KEY = os.getenv("API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# 🌍 TIMEZONE ITALIA
-tz = pytz.timezone('Europe/Rome')
+# 🌍 TIMEZONE ITALIA (senza pytz)
+tz = ZoneInfo("Europe/Rome")
 
 # 💰 BANKROLL
 bankroll = 100.0
@@ -25,7 +25,6 @@ max_giocate = 2
 STOP_LOSS = -5
 TAKE_PROFIT = 5
 
-# 📊 DATI
 selected_matches = []
 matches_state = {}
 last_day_sent = None
@@ -33,7 +32,7 @@ last_day_sent = None
 # 🎯 CAMPIONATI
 ALL_LEAGUES = [39, 140, 135, 78, 61, 88, 94, 144, 203, 207]
 
-# 📩 INVIO SICURO
+# 📩 SEND
 def send(msg):
     try:
         bot.send_message(CHAT_ID, msg)
@@ -51,7 +50,7 @@ def prob_goal(xg):
     if xg >= 0.8: return 50
     return 30
 
-# 💰 STAKE
+# 💰 stake
 def calcola_stake(prob):
     global bankroll
     if prob >= 70:
@@ -85,7 +84,7 @@ def reset(msg):
     bankroll = 100
     bot.reply_to(msg, "♻️ Reset completato")
 
-# 🧠 AUTO FILTRO
+# 🧠 AUTO FILTRO + DEBUG
 def filtra_campionati():
     try:
         today = datetime.now(tz).strftime("%Y-%m-%d")
@@ -111,17 +110,25 @@ def filtra_campionati():
             stats[league]["goals"] += goals
 
         migliori = []
+        debug_msg = "📊 DEBUG CAMPIONATI\n\n"
 
         for l, s in stats.items():
-            if s["matches"] < 3:
+            if s["matches"] == 0:
                 continue
 
-            media = s["goals"] / s["matches"]
+            media = round(s["goals"] / s["matches"], 2)
 
-            if media >= 2.2:
+            status = "✅" if (s["matches"] >= 3 and media >= 2.2) else "❌"
+
+            debug_msg += f"League {l}\nPartite: {s['matches']}\nMedia gol: {media} {status}\n\n"
+
+            if s["matches"] >= 3 and media >= 2.2:
                 migliori.append(l)
 
+        send(debug_msg)
+
         if not migliori:
+            send("⚠️ Nessun campionato sopra soglia oggi")
             return ALL_LEAGUES[:5]
 
         return migliori
@@ -130,7 +137,7 @@ def filtra_campionati():
         print("Errore filtro:", e)
         return ALL_LEAGUES
 
-# 📅 SELEZIONE PARTITE
+# 📅 SELEZIONE
 def seleziona_partite():
     global selected_matches
 
@@ -158,11 +165,10 @@ def seleziona_partite():
         selected_matches = matches[:3]
 
         if not selected_matches:
-            send("⚠️ Nessuna partita trovata oggi")
+            send("⚠️ Nessuna partita selezionata oggi")
             return
 
         msg = "📅 STRATEGIA ORE 11:30\n\n"
-        msg += f"Campionati attivi: {len(leagues)}\n\n"
 
         for i, m in enumerate(selected_matches):
             msg += f"""{i+1}) {m['home']} - {m['away']}
@@ -286,7 +292,6 @@ def loop_live():
         now = datetime.now(tz)
         today = now.strftime("%Y-%m-%d")
 
-        # ⏰ INVIO 11:30 ORA ITALIANA
         if now.hour == 11 and now.minute == 30 and last_day_sent != today:
             seleziona_partite()
             last_day_sent = today
@@ -297,6 +302,6 @@ def loop_live():
 # ▶️ AVVIO
 threading.Thread(target=loop_live).start()
 
-print("✅ Bot attivo con orario italiano")
+print("✅ Bot con DEBUG attivo")
 
 bot.infinity_polling()
