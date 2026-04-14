@@ -4,6 +4,7 @@ import time
 import requests
 import threading
 from datetime import datetime
+import pytz
 
 # 🔑 CONFIG
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -11,6 +12,9 @@ CHAT_ID = int(os.getenv("CHAT_ID"))
 API_KEY = os.getenv("API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# 🌍 TIMEZONE ITALIA
+tz = pytz.timezone('Europe/Rome')
 
 # 💰 BANKROLL
 bankroll = 100.0
@@ -84,7 +88,7 @@ def reset(msg):
 # 🧠 AUTO FILTRO
 def filtra_campionati():
     try:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(tz).strftime("%Y-%m-%d")
         url = f"https://v3.football.api-sports.io/fixtures?date={today}"
         headers = {"x-apisports-key": API_KEY}
 
@@ -126,14 +130,14 @@ def filtra_campionati():
         print("Errore filtro:", e)
         return ALL_LEAGUES
 
-# 📅 SELEZIONE
+# 📅 SELEZIONE PARTITE
 def seleziona_partite():
     global selected_matches
 
     try:
         leagues = filtra_campionati()
 
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(tz).strftime("%Y-%m-%d")
         url = f"https://v3.football.api-sports.io/fixtures?date={today}"
         headers = {"x-apisports-key": API_KEY}
 
@@ -279,9 +283,10 @@ def loop_live():
     global last_day_sent
 
     while True:
-        now = datetime.now()
+        now = datetime.now(tz)
         today = now.strftime("%Y-%m-%d")
 
+        # ⏰ INVIO 11:30 ORA ITALIANA
         if now.hour == 11 and now.minute == 30 and last_day_sent != today:
             seleziona_partite()
             last_day_sent = today
@@ -292,6 +297,6 @@ def loop_live():
 # ▶️ AVVIO
 threading.Thread(target=loop_live).start()
 
-print("✅ Bot attivo")
+print("✅ Bot attivo con orario italiano")
 
 bot.infinity_polling()
