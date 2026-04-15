@@ -194,7 +194,7 @@ def live():
 💰 Stake {round(s,2)}""")
 
 # ==============================
-# LOOP
+# LOOP (FIX ORARIO)
 # ==============================
 def loop():
     last = None
@@ -202,7 +202,10 @@ def loop():
     while True:
         now = datetime.now(tz)
 
-        if now.hour == 11 and now.minute == 30 and last != now.date():
+        print("⏰ CHECK:", now)
+
+        if now.hour == 11 and 30 <= now.minute <= 35 and last != now.date():
+            print("🚀 INVIO PARTITE")
             seleziona()
             last = now.date()
 
@@ -210,7 +213,7 @@ def loop():
         time.sleep(60)
 
 # ==============================
-# WEBHOOK (FIX DEFINITIVO)
+# WEBHOOK
 # ==============================
 @app.route('/', methods=['GET'])
 def home():
@@ -222,7 +225,7 @@ def webhook():
 
     data = request.get_json()
 
-    print("📦 RAW UPDATE:", data)
+    print("📦 RAW:", data)
 
     if not data:
         return '', 200
@@ -230,7 +233,6 @@ def webhook():
     message = data.get("message") or data.get("edited_message")
 
     if not message:
-        print("❌ Nessun message valido")
         return '', 200
 
     chat_id = message["chat"]["id"]
@@ -252,8 +254,6 @@ Giocate: {giocate}
 🏦 Bankroll: {round(bankroll,2)}""")
 
     elif text == "/profit":
-        print("🔥 PROFIT OK")
-
         bot.send_message(chat_id, f"""💰 PROFIT
 
 Profit: {round(profit,2)}
@@ -268,7 +268,6 @@ Giocate: {giocate}""")
         profit = 0
         giocate = 0
         bankroll = 100
-
         bot.send_message(chat_id, "♻️ Reset completato")
 
     return '', 200
