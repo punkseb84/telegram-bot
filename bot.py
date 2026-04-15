@@ -125,7 +125,7 @@ def get_team_stats(team_id):
     return stats
 
 # ==============================
-# PRE MATCH
+# PRE MATCH (11:30)
 # ==============================
 def selezione_pro():
     global selected_matches
@@ -183,7 +183,7 @@ def get_stat(stats, name):
     return 0
 
 # ==============================
-# LIVE SCAN (PRO)
+# LIVE SCAN
 # ==============================
 def live_scan():
     data = api_call("https://v3.football.api-sports.io/fixtures?live=all")
@@ -208,9 +208,7 @@ def live_scan():
             if match_id not in tracked_matches:
                 tracked_matches[match_id] = {"finished": False}
 
-            # ==============================
-            # HT (FIX)
-            # ==============================
+            # HT
             if minute <= 45 and total_goals >= 1:
 
                 if not tracked_matches[match_id].get("ht_alert_sent"):
@@ -234,9 +232,7 @@ Risultato: {goals_home}-{goals_away}
 
                 continue
 
-            # ==============================
-            # STATISTICHE
-            # ==============================
+            # stats
             stats = m.get("statistics")
             if not stats:
                 continue
@@ -253,29 +249,19 @@ Risultato: {goals_home}-{goals_away}
             shots = int(get_stat(home_stats, "Shots on Goal")) + \
                     int(get_stat(away_stats, "Shots on Goal"))
 
-            # 🔥 MOMENTUM AVANZATO
             momentum = attacks + (shots * 2)
 
-            # ==============================
-            # FILTRO INTELLIGENTE PRO
-            # ==============================
             if minute >= 60 and total_goals == 0:
 
                 trigger = False
 
-                # livello 1
                 if xg >= 1.2 and momentum >= 70 and shots >= 5:
                     trigger = True
-
-                # livello 2
                 elif xg == 0 and momentum >= 80 and shots >= 6:
                     trigger = True
-
-                # livello 3
                 elif momentum >= 100:
                     trigger = True
 
-                # blocco fake
                 if shots <= 2:
                     trigger = False
 
@@ -301,7 +287,6 @@ Tiri: {shots}
 
         except Exception as e:
             print("LIVE ERROR:", e)
-            continue
 
 # ==============================
 # CHECK RISULTATI
@@ -356,10 +341,12 @@ def loop():
     while True:
         now = datetime.now(tz)
 
-        if now.hour == 18 and 30 <= now.minute <= 35 and last_day != now.date():
+        # 🔥 PREMATCH 11:30
+        if now.hour == 11 and 30 <= now.minute <= 35 and last_day != now.date():
             selezione_pro()
             last_day = now.date()
 
+        # LIVE
         if 12 <= now.hour <= 23:
             live_scan()
             check_results()
@@ -403,6 +390,6 @@ Giocate: {giocate}
 # ==============================
 # START
 # ==============================
-print("🚀 BOT PRO DEFINITIVO ATTIVO")
+print("🚀 BOT PRO DEFINITIVO ATTIVO (PREMATCH 11:30)")
 
 bot.infinity_polling(skip_pending=True, none_stop=True)
