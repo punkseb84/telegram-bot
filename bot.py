@@ -12,16 +12,12 @@ from zoneinfo import ZoneInfo
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 API_KEY = os.getenv("API_KEY")
 
-# DEBUG
 print("DEBUG API_KEY:", API_KEY)
-print("ENV:", dict(os.environ))
 
 if not API_KEY:
     print("❌ API KEY NON CARICATA")
 
-# ✅ CREAZIONE BOT (DEVE STARE QUI)
 bot = telebot.TeleBot(TOKEN)
-
 tz = ZoneInfo("Europe/Rome")
 
 # ==============================
@@ -36,10 +32,31 @@ bankroll = 100
 giocate = 0
 
 # ==============================
-# API CALL (FIX 403)
+# CACHE
+# ==============================
+cache = {}
+team_cache = {}
+sent_matches = set()
+CACHE_TIME = 300
+MAX_REQUESTS = 7000
+
+# ==============================
+# API CALL OTTIMIZZATA
 # ==============================
 def api_call(url):
     global api_requests
+
+    now = time.time()
+
+    # CACHE
+    if url in cache:
+        data, timestamp = cache[url]
+        if now - timestamp < CACHE_TIME:
+            return data
+
+    if api_requests > MAX_REQUESTS:
+        print("🚫 LIMITE API RAGGIUNTO")
+        return {}
 
     headers = {
         "x-apisports-key": API_KEY,
@@ -50,33 +67,33 @@ def api_call(url):
         r = requests.get(url, headers=headers, timeout=10)
         api_requests += 1
 
-        if r.status_code == 403:
-            print("❌ API 403 ERROR")
-            print(r.text)
-            return {}
-
         if r.status_code != 200:
-            print("❌ API ERROR:", r.status_code)
+            print("API ERROR:", r.status_code)
             return {}
 
-        return r.json()
+        data = r.json()
+        cache[url] = (data, now)
+
+        return data
 
     except Exception as e:
-        print("❌ API DOWN:", e)
+        print("API DOWN:", e)
         return {}
 
 # ==============================
 # SEND
 # ==============================
 def send(msg):
-    global last_chat_id
     if last_chat_id:
         bot.send_message(last_chat_id, msg)
 
 # ==============================
-# STATS SQUADRA
+# STATS SQUADRA (CACHE)
 # ==============================
 def get_team_stats(team_id):
+    if team_id in team_cache:
+        return team_cache[team_id]
+
     url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=10"
     data = api_call(url)
 
@@ -90,12 +107,8 @@ def get_team_stats(team_id):
     for m in matches:
         home = m["teams"]["home"]["id"] == team_id
 
-        if home:
-            g1 = m["goals"]["home"]
-            g2 = m["goals"]["away"]
-        else:
-            g1 = m["goals"]["away"]
-            g2 = m["goals"]["home"]
+        g1 = m["goals"]["home"] if home else m["goals"]["away"]
+        g2 = m["goals"]["away"] if home else m["goals"]["home"]
 
         gf += g1
         ga += g2
@@ -105,14 +118,17 @@ def get_team_stats(team_id):
 
     tot = len(matches)
 
-    return {
+    stats = {
         "gf": gf / tot,
         "ga": ga / tot,
         "over": over / tot
     }
 
+    team_cache[team_id] = stats
+    return stats
+
 # ==============================
-# PRE MATCH (18:30)
+# PRE MATCH (LIMITATO A 3)
 # ==============================
 def selezione_pro():
     today = datetime.now(tz).strftime("%Y-%m-%d")
@@ -121,7 +137,7 @@ def selezione_pro():
 
     scelte = []
 
-    for m in data.get("response", []):
+    for m in data.get("response", [])[:10]:
         try:
             home_id = m["teams"]["home"]["id"]
             away_id = m["teams"]["away"]["id"]
@@ -136,6 +152,7 @@ def selezione_pro():
                 scelte.append(
                     f"{m['teams']['home']['name']} - {m['teams']['away']['name']}"
                 )
+
         except:
             continue
 
@@ -145,7 +162,8 @@ def selezione_pro():
 
     msg = "🔥 PRE MATCH PRO (18:30)\n\n"
 
-    for s in scelte[:5]:
+    # ✅ LIMITA A 3
+    for s in scelte[:3]:
         msg += s + "\n"
 
     send(msg)
@@ -160,7 +178,7 @@ def get_stat(stats, name):
     return 0
 
 # ==============================
-# LIVE + MOMENTUM
+# LIVE SCAN OTTIMIZZATO
 # ==============================
 def live_scan():
     url = "https://v3.football.api-sports.io/fixtures?live=all"
@@ -168,43 +186,43 @@ def live_scan():
 
     for m in data.get("response", []):
         try:
-            stats = m.get("statistics")
+            match_id = m["fixture"]["id"]
 
+            if match_id in sent_matches:
+                continue
+
+            stats = m.get("statistics")
             if not stats:
                 continue
 
             home_stats = stats[0]["statistics"]
             away_stats = stats[1]["statistics"]
 
-            xg_home = float(get_stat(home_stats, "Expected Goals (xG)"))
-            xg_away = float(get_stat(away_stats, "Expected Goals (xG)"))
+            xg = float(get_stat(home_stats, "Expected Goals (xG)")) + \
+                 float(get_stat(away_stats, "Expected Goals (xG)"))
 
-            att_home = int(get_stat(home_stats, "Dangerous Attacks"))
-            att_away = int(get_stat(away_stats, "Dangerous Attacks"))
+            momentum = int(get_stat(home_stats, "Dangerous Attacks")) + \
+                       int(get_stat(away_stats, "Dangerous Attacks"))
 
-            shots_home = int(get_stat(home_stats, "Shots on Goal"))
-            shots_away = int(get_stat(away_stats, "Shots on Goal"))
+            shots = int(get_stat(home_stats, "Shots on Goal")) + \
+                    int(get_stat(away_stats, "Shots on Goal"))
 
-            xg_total = xg_home + xg_away
-            momentum = att_home + att_away
-            shots = shots_home + shots_away
-
-            if xg_total >= 1.5 and momentum >= 80 and shots >= 6:
+            if xg >= 1.5 and momentum >= 80 and shots >= 6:
                 send(f"""⚡ LIVE ALERT
 
 {m['teams']['home']['name']} - {m['teams']['away']['name']}
 
-xG: {xg_total}
+xG: {xg}
 Momentum: {momentum}
 Tiri: {shots}
 """)
+                sent_matches.add(match_id)
 
-        except Exception as e:
-            print("LIVE ERROR:", e)
+        except:
             continue
 
 # ==============================
-# LOOP
+# LOOP OTTIMIZZATO
 # ==============================
 def loop():
     last_day = None
@@ -213,13 +231,13 @@ def loop():
         now = datetime.now(tz)
 
         if now.hour == 18 and 30 <= now.minute <= 35 and last_day != now.date():
-            print("🚀 INVIO 18:30")
             selezione_pro()
             last_day = now.date()
 
-        live_scan()
+        if 12 <= now.hour <= 23:
+            live_scan()
 
-        time.sleep(60)
+        time.sleep(180)
 
 # ==============================
 # COMANDI
@@ -230,9 +248,6 @@ def handle(msg):
 
     last_chat_id = msg.chat.id
     text = msg.text.lower() if msg.text else ""
-
-    if "@" in text:
-        text = text.split("@")[0]
 
     if text.startswith("/start"):
         bot.reply_to(msg, "🤖 BOT PRO ATTIVO")
@@ -261,15 +276,12 @@ Giocate: {giocate}
     elif text.startswith("/oggi"):
         selezione_pro()
 
-    elif text.startswith("/live"):
-        live_scan()
-
     elif text.startswith("/api"):
         bot.reply_to(msg, f"API calls: {api_requests}")
 
 # ==============================
 # START
 # ==============================
-print("🚀 BOT DEFINITIVO ATTIVO")
+print("🚀 BOT OTTIMIZZATO ATTIVO")
 
 bot.infinity_polling(skip_pending=True, none_stop=True)
