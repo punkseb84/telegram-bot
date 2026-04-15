@@ -16,7 +16,7 @@ bot = telebot.TeleBot(TOKEN)
 tz = ZoneInfo("Europe/Rome")
 
 # ==============================
-# COMPETIZIONI EUROPEE (21)
+# COMPETIZIONI EUROPEE
 # ==============================
 LEAGUES = [
     39, 140, 135, 78, 61,
@@ -36,7 +36,6 @@ api_requests = 0
 selected_matches = set()
 tracked_matches = {}
 
-# PROFIT TRACKING
 profit = 0.0
 bankroll = 100.0
 giocate = 0
@@ -47,7 +46,6 @@ bets = {}
 # ==============================
 cache = {}
 team_cache = {}
-
 CACHE_TIME = 300
 
 # ==============================
@@ -55,7 +53,6 @@ CACHE_TIME = 300
 # ==============================
 def api_call(url):
     global api_requests
-
     now = time.time()
 
     if url in cache:
@@ -73,12 +70,10 @@ def api_call(url):
         api_requests += 1
 
         if r.status_code != 200:
-            print("API ERROR:", r.status_code)
             return {}
 
         data = r.json()
         cache[url] = (data, now)
-
         return data
 
     except:
@@ -115,7 +110,6 @@ def get_team_stats(team_id):
         g2 = m["goals"]["away"] if home else m["goals"]["home"]
 
         gf += g1
-
         if g1 + g2 >= 3:
             over += 1
 
@@ -138,28 +132,22 @@ def selezione_pro():
     selected_matches.clear()
 
     today = datetime.now(tz).strftime("%Y-%m-%d")
-    url = f"https://v3.football.api-sports.io/fixtures?date={today}"
-    data = api_call(url)
+    data = api_call(f"https://v3.football.api-sports.io/fixtures?date={today}")
 
     scelte = []
 
     for m in data.get("response", []):
         try:
-            league_id = m["league"]["id"]
-
-            if league_id not in LEAGUES:
+            if m["league"]["id"] not in LEAGUES:
                 continue
 
-            home_id = m["teams"]["home"]["id"]
-            away_id = m["teams"]["away"]["id"]
-
-            h = get_team_stats(home_id)
-            a = get_team_stats(away_id)
+            h = get_team_stats(m["teams"]["home"]["id"])
+            a = get_team_stats(m["teams"]["away"]["id"])
 
             media = h["gf"] + a["gf"]
             over = (h["over"] + a["over"]) / 2
 
-            if league_id in [2, 3, 848]:
+            if m["league"]["id"] in [2,3,848]:
                 if media < 2.6 or over < 0.6:
                     continue
 
@@ -180,7 +168,6 @@ def selezione_pro():
     for m, _ in scelte[:3]:
         match_id = m["fixture"]["id"]
         selected_matches.add(match_id)
-
         msg += f"{m['teams']['home']['name']} - {m['teams']['away']['name']}\n"
 
     send(msg)
@@ -195,11 +182,10 @@ def get_stat(stats, name):
     return 0
 
 # ==============================
-# LIVE SCAN
+# LIVE SCAN (FIX HT)
 # ==============================
 def live_scan():
-    url = "https://v3.football.api-sports.io/fixtures?live=all"
-    data = api_call(url)
+    data = api_call("https://v3.football.api-sports.io/fixtures?live=all")
 
     for m in data.get("response", []):
         try:
@@ -221,6 +207,35 @@ def live_scan():
             if match_id not in tracked_matches:
                 tracked_matches[match_id] = {"finished": False}
 
+            # ==============================
+            # 🔴 HT FIX (NON SERVONO STATS)
+            # ==============================
+            if minute <= 45 and total_goals >= 1:
+
+                if not tracked_matches[match_id].get("ht_alert_sent"):
+
+                    send(f"""✅ OVER 0.5 HT IN CASSA
+
+{match_name}
+Minuto: {minute}
+Risultato: {goals_home}-{goals_away}
+""")
+
+                    bets[match_id] = {
+                        "type": "HT",
+                        "stake": 1,
+                        "odds": 1.80,
+                        "result_checked": False
+                    }
+
+                    tracked_matches[match_id]["finished"] = True
+                    tracked_matches[match_id]["ht_alert_sent"] = True
+
+                continue
+
+            # ==============================
+            # STATISTICHE (SOLO QUI)
+            # ==============================
             stats = m.get("statistics")
             if not stats:
                 continue
@@ -238,23 +253,7 @@ def live_scan():
                     int(get_stat(away_stats, "Shots on Goal"))
 
             # ==============================
-            # PRIMO TEMPO
-            # ==============================
-            if minute <= 45 and total_goals >= 1:
-                send(f"✅ OVER 0.5 HT IN CASSA\n\n{match_name}")
-
-                bets[match_id] = {
-                    "type": "HT",
-                    "stake": 1,
-                    "odds": 1.80,
-                    "result_checked": False
-                }
-
-                tracked_matches[match_id]["finished"] = True
-                continue
-
-            # ==============================
-            # SECONDO TEMPO
+            # 🔵 SECONDO TEMPO
             # ==============================
             if minute >= 60 and total_goals == 0:
 
@@ -276,9 +275,6 @@ Tiri: {shots}
                         "result_checked": False
                     }
 
-                else:
-                    print("SCARTATA:", match_name)
-
                 tracked_matches[match_id]["finished"] = True
 
         except:
@@ -295,10 +291,9 @@ def check_results():
         if bet["result_checked"]:
             continue
 
-        url = f"https://v3.football.api-sports.io/fixtures?id={match_id}"
-        data = api_call(url)
-
+        data = api_call(f"https://v3.football.api-sports.io/fixtures?id={match_id}")
         response = data.get("response", [])
+
         if not response:
             continue
 
@@ -308,17 +303,14 @@ def check_results():
         if status not in ["FT", "AET", "PEN"]:
             continue
 
-        goals_home = m["goals"]["home"]
-        goals_away = m["goals"]["away"]
-        total_goals = goals_home + goals_away
+        goals = m["goals"]["home"] + m["goals"]["away"]
 
         win = False
 
         if bet["type"] == "HT":
             win = True
-
         elif bet["type"] == "ST":
-            if total_goals >= 1:
+            if goals >= 1:
                 win = True
 
         if win:
@@ -341,7 +333,7 @@ def loop():
     while True:
         now = datetime.now(tz)
 
-        if now.hour == 18 and now.minute == 30 and last_day != now.date():
+        if now.hour == 18 and 30 <= now.minute <= 35 and last_day != now.date():
             selezione_pro()
             last_day = now.date()
 
@@ -362,7 +354,7 @@ def handle(msg):
     text = msg.text.lower() if msg.text else ""
 
     if text.startswith("/start"):
-        bot.reply_to(msg, "🤖 BOT COMPLETO ATTIVO")
+        bot.reply_to(msg, "🤖 BOT AGGIORNATO ATTIVO")
 
         if not loop_started:
             threading.Thread(target=loop, daemon=True).start()
@@ -388,6 +380,6 @@ Giocate: {giocate}
 # ==============================
 # START
 # ==============================
-print("🚀 BOT COMPLETO DEFINITIVO ATTIVO")
+print("🚀 BOT FIX HT ATTIVO")
 
 bot.infinity_polling(skip_pending=True, none_stop=True)
