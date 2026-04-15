@@ -22,6 +22,8 @@ if not API_KEY:
 # ✅ CREAZIONE BOT (DEVE STARE QUI)
 bot = telebot.TeleBot(TOKEN)
 
+tz = ZoneInfo("Europe/Rome")
+
 # ==============================
 # STATO
 # ==============================
