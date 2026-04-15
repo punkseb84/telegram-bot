@@ -64,4 +64,4 @@ Profit: {profit}
 # START
 # ==============================
 print("🚀 BOT ATTIVO")
-bot.infinity_polling(skip_pending=True)
+bot.infinity_polling(skip_pending=True, none_stop=True)
