@@ -48,11 +48,11 @@ def api_call(url):
         return {}
 
 # ==============================
-# SEND
+# SEND (FIX CHAT_ID)
 # ==============================
-def send(msg):
+def send(msg, chat_id=None):
     try:
-        bot.send_message(CHAT_ID, msg)
+        bot.send_message(chat_id if chat_id else CHAT_ID, msg)
     except:
         pass
 
