@@ -101,12 +101,14 @@ def handle(msg):
 
     print("📩 MSG:", text)
 
+    # rimuove @nomebot
     if "@" in text:
         text = text.split("@")[0]
 
     if text.startswith("/start"):
         bot.reply_to(msg, "🤖 Bot attivo")
 
+        # avvia loop UNA sola volta
         threading.Thread(target=loop, daemon=True).start()
 
     elif text.startswith("/profit"):
@@ -133,13 +135,8 @@ Profit: {profit}
         bot.reply_to(msg, f"Ricevuto: {text}")
 
 # ==============================
-# START
+# START (CORRETTO)
 # ==============================
 print("🚀 BOT STABILE ATTIVO")
 
-while True:
-    try:
-        bot.infinity_polling(skip_pending=True)
-    except Exception as e:
-        print("ERRORE:", e)
-        time.sleep(5)
+bot.infinity_polling(skip_pending=True, none_stop=True)
