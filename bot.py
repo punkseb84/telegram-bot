@@ -11,7 +11,6 @@ from flask import Flask, request
 # CONFIG
 # ==============================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = int(os.getenv("CHAT_ID"))
 API_KEY = os.getenv("API_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
@@ -21,7 +20,7 @@ app = Flask(__name__)
 tz = ZoneInfo("Europe/Rome")
 
 # ==============================
-# BANKROLL
+# STATO BOT
 # ==============================
 bankroll = 100.0
 profit = 0.0
@@ -29,9 +28,10 @@ giocate = 0
 max_giocate = 2
 
 selected_matches = []
+last_chat_id = None
 
 # ==============================
-# API TRACKING
+# API
 # ==============================
 api_requests = 0
 MAX_REQUESTS = 7500
@@ -39,7 +39,6 @@ MAX_REQUESTS = 7500
 def api_call(url):
     global api_requests
     headers = {"x-apisports-key": API_KEY}
-
     try:
         r = requests.get(url, headers=headers)
         api_requests += 1
@@ -48,74 +47,52 @@ def api_call(url):
         return {}
 
 # ==============================
-# SEND
+# SEND (CHAT DINAMICA)
 # ==============================
 def send(msg):
-    try:
-        bot.send_message(CHAT_ID, msg)
-    except:
-        pass
+    global last_chat_id
+    if last_chat_id:
+        bot.send_message(last_chat_id, msg)
 
 # ==============================
-# xG LOGIC
+# LOGICA xG
 # ==============================
 def calcola_xg(tiri, porta):
     return (tiri * 0.05) + (porta * 0.15)
 
-def prob_goal(xg):
-    if xg >= 1.5: return 80
-    if xg >= 1.2: return 70
-    if xg >= 1.0: return 60
-    if xg >= 0.8: return 50
-    return 30
-
-def stake(prob):
-    if prob >= 70: return bankroll * 0.015
-    if prob >= 50: return bankroll * 0.007
-    return 0
+# ==============================
+# CAMPIONATI
+# ==============================
+ALL_LEAGUES = [39,140,135,78,61,88,94,144,203,207]
 
 # ==============================
-# LEAGUES
-# ==============================
-ALL_LEAGUES = [
-    39,140,135,78,61,
-    88,94,144,203,207,
-    71,253,235,218,
-    119,262,307,304,
-    114,239
-]
-
-# ==============================
-# FILTRO STORICO
+# FILTRO
 # ==============================
 def filtra_leghe():
     migliori = []
-
     for league in ALL_LEAGUES:
         url = f"https://v3.football.api-sports.io/fixtures?league={league}&last=10"
         data = api_call(url)
 
         matches = data.get("response", [])
-        if len(matches) < 10:
+        if len(matches) < 5:
             continue
 
-        goals = sum(
-            (m["goals"]["home"] or 0) + (m["goals"]["away"] or 0)
-            for m in matches
-        )
-
+        goals = sum((m["goals"]["home"] or 0)+(m["goals"]["away"] or 0) for m in matches)
         media = goals / len(matches)
 
-        if media >= 2.4:
+        if media >= 2.2:
             migliori.append(league)
 
-    return migliori if migliori else ALL_LEAGUES[:5]
+    return migliori if migliori else ALL_LEAGUES[:3]
 
 # ==============================
-# SELEZIONE PARTITE
+# SELEZIONE
 # ==============================
 def seleziona():
     global selected_matches
+
+    print("🚀 SELEZIONE PARTITE")
 
     leagues = filtra_leghe()
     today = datetime.now(tz).strftime("%Y-%m-%d")
@@ -141,79 +118,31 @@ def seleziona():
         send("⚠️ Nessuna partita oggi")
         return
 
-    msg = "📅 STRATEGIA OGGI\n\n"
-
-    for i, m in enumerate(selected_matches):
-        msg += f"{i+1}) {m['home']} - {m['away']}\n"
-        msg += "👉 Over 0.5 HT\n👉 Se 0-0 → Over 1.5 2T\n\n"
+    msg = "📅 PARTITE OGGI\n\n"
+    for m in selected_matches:
+        msg += f"{m['home']} - {m['away']}\n"
 
     send(msg)
 
 # ==============================
-# LIVE
-# ==============================
-def live():
-    global giocate, profit, bankroll
-
-    url = "https://v3.football.api-sports.io/fixtures?live=all"
-    data = api_call(url)
-
-    for m in data.get("response", []):
-
-        if m["fixture"]["id"] not in [x["id"] for x in selected_matches]:
-            continue
-
-        minute = m["fixture"]["status"]["elapsed"]
-
-        try:
-            stats = m["statistics"][0]
-            tiri = stats["shots"]["total"] or 0
-            porta = stats["shots"]["on"] or 0
-        except:
-            continue
-
-        xg = calcola_xg(tiri, porta)
-        momentum = porta + tiri * 0.5
-
-        if 50 <= minute <= 60 and giocate < max_giocate:
-
-            if xg >= 1.2 and momentum >= 8:
-
-                p = prob_goal(xg)
-                s = stake(p)
-
-                giocate += 1
-
-                send(f"""🔥 LIVE
-
-⏱ {minute}'
-📈 xG {round(xg,2)}
-⚡ Momentum {momentum}
-
-👉 Over 1.5 2T
-💰 Stake {round(s,2)}""")
-
-# ==============================
-# LOOP (FIX ORARIO)
+# LOOP
 # ==============================
 def loop():
     last = None
 
     while True:
         now = datetime.now(tz)
+        print("⏰ LOOP:", now)
 
-        print("⏰ CHECK:", now)
-
+        # FINESTRA 5 MINUTI
         if now.hour == 11 and 30 <= now.minute <= 35 and last != now.date():
-            print("🚀 INVIO PARTITE")
             seleziona()
             last = now.date()
 
-        live()
         time.sleep(60)
 
 # ==============================
-# WEBHOOK
+# WEBHOOK (FIX DEFINITIVO)
 # ==============================
 @app.route('/', methods=['GET'])
 def home():
@@ -221,10 +150,9 @@ def home():
 
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
-    global profit, giocate, bankroll
+    global profit, giocate, bankroll, last_chat_id
 
     data = request.get_json()
-
     print("📦 RAW:", data)
 
     if not data:
@@ -236,39 +164,37 @@ def webhook():
         return '', 200
 
     chat_id = message["chat"]["id"]
-    text = message.get("text", "").lower()
+    last_chat_id = chat_id  # 🔥 fondamentale
 
+    text = message.get("text", "")
     print("📩 MSG:", text)
 
-    if "@" in text:
-        text = text.split("@")[0]
+    if not text:
+        return '', 200
 
-    if text == "/start":
-        bot.send_message(chat_id, "🤖 BOT PRO ATTIVO")
+    text = text.lower().strip()
 
-    elif text == "/status":
-        bot.send_message(chat_id, f"""📊 STATO
+    # ======================
+    # COMANDI
+    # ======================
 
-Giocate: {giocate}
-💰 Profit: {round(profit,2)}
-🏦 Bankroll: {round(bankroll,2)}""")
+    if text.startswith("/start"):
+        bot.send_message(chat_id, "🤖 Bot attivo")
 
-    elif text == "/profit":
-        bot.send_message(chat_id, f"""💰 PROFIT
+    elif text.startswith("/profit"):
+        bot.send_message(chat_id, f"💰 Profit: {profit}")
 
-Profit: {round(profit,2)}
-Bankroll: {round(bankroll,2)}
-Giocate: {giocate}""")
+    elif text.startswith("/status"):
+        bot.send_message(chat_id, f"Giocate: {giocate} | Bankroll: {bankroll}")
 
-    elif text == "/api":
-        perc = round((api_requests / MAX_REQUESTS) * 100, 1)
-        bot.send_message(chat_id, f"{api_requests}/{MAX_REQUESTS} ({perc}%)")
-
-    elif text == "/reset":
+    elif text.startswith("/reset"):
         profit = 0
         giocate = 0
         bankroll = 100
-        bot.send_message(chat_id, "♻️ Reset completato")
+        bot.send_message(chat_id, "Reset fatto")
+
+    elif text.startswith("/api"):
+        bot.send_message(chat_id, f"API: {api_requests}/{MAX_REQUESTS}")
 
     return '', 200
 
@@ -277,12 +203,15 @@ Giocate: {giocate}""")
 # ==============================
 if __name__ == "__main__":
 
+    # reset webhook
     requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook")
+
+    # set webhook
     requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={WEBHOOK_URL}/{TELEGRAM_TOKEN}")
 
-    thread = threading.Thread(target=loop)
-    thread.daemon = True
-    thread.start()
+    # loop
+    threading.Thread(target=loop, daemon=True).start()
 
+    # server
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, use_reloader=False)
