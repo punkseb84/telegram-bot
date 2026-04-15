@@ -14,25 +14,17 @@ API_KEY = os.getenv("API_KEY")
 
 print("DEBUG API_KEY:", API_KEY)
 
-if not API_KEY:
-    print("❌ API KEY NON CARICATA")
-
 bot = telebot.TeleBot(TOKEN)
 tz = ZoneInfo("Europe/Rome")
 
 # ==============================
-# COMPETIZIONI EUROPEE (21)
+# COMPETIZIONI EUROPEE
 # ==============================
 LEAGUES = [
-    # TOP 5
     39, 140, 135, 78, 61,
-
-    # ALTRI CAMPIONATI
     94, 88, 203, 144, 207,
     119, 71, 62, 79, 141,
     136, 103, 98,
-
-    # COPPE EUROPEE
     2, 3, 848
 ]
 
@@ -43,37 +35,28 @@ last_chat_id = None
 loop_started = False
 api_requests = 0
 
-profit = 0
-bankroll = 100
-giocate = 0
-
 # ==============================
 # CACHE
 # ==============================
 cache = {}
 team_cache = {}
-sent_matches = set()
+tracked_matches = {}
 
 CACHE_TIME = 300
 MAX_REQUESTS = 7000
 
 # ==============================
-# API CALL OTTIMIZZATA
+# API CALL
 # ==============================
 def api_call(url):
     global api_requests
 
     now = time.time()
 
-    # CACHE
     if url in cache:
         data, timestamp = cache[url]
         if now - timestamp < CACHE_TIME:
             return data
-
-    if api_requests > MAX_REQUESTS:
-        print("🚫 LIMITE API RAGGIUNTO")
-        return {}
 
     headers = {
         "x-apisports-key": API_KEY,
@@ -93,8 +76,7 @@ def api_call(url):
 
         return data
 
-    except Exception as e:
-        print("API DOWN:", e)
+    except:
         return {}
 
 # ==============================
@@ -103,99 +85,6 @@ def api_call(url):
 def send(msg):
     if last_chat_id:
         bot.send_message(last_chat_id, msg)
-
-# ==============================
-# STATS SQUADRA (CACHE)
-# ==============================
-def get_team_stats(team_id):
-    if team_id in team_cache:
-        return team_cache[team_id]
-
-    url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=10"
-    data = api_call(url)
-
-    matches = data.get("response", [])
-
-    if not matches:
-        return {"gf": 0, "ga": 0, "over": 0}
-
-    gf = ga = over = 0
-
-    for m in matches:
-        home = m["teams"]["home"]["id"] == team_id
-
-        g1 = m["goals"]["home"] if home else m["goals"]["away"]
-        g2 = m["goals"]["away"] if home else m["goals"]["home"]
-
-        gf += g1
-        ga += g2
-
-        if g1 + g2 >= 3:
-            over += 1
-
-    tot = len(matches)
-
-    stats = {
-        "gf": gf / tot,
-        "ga": ga / tot,
-        "over": over / tot
-    }
-
-    team_cache[team_id] = stats
-    return stats
-
-# ==============================
-# PRE MATCH
-# ==============================
-def selezione_pro():
-    today = datetime.now(tz).strftime("%Y-%m-%d")
-    url = f"https://v3.football.api-sports.io/fixtures?date={today}"
-    data = api_call(url)
-
-    scelte = []
-
-    for m in data.get("response", []):
-        try:
-            league_id = m["league"]["id"]
-
-            # filtro Europa
-            if league_id not in LEAGUES:
-                continue
-
-            home_id = m["teams"]["home"]["id"]
-            away_id = m["teams"]["away"]["id"]
-
-            # chiamate API SOLO dopo filtro
-            h = get_team_stats(home_id)
-            a = get_team_stats(away_id)
-
-            media = h["gf"] + a["gf"]
-            over = (h["over"] + a["over"]) / 2
-
-            # filtro coppe più severo
-            if league_id in [2, 3, 848]:
-                if media < 2.6 or over < 0.6:
-                    continue
-
-            # filtro generale
-            if media >= 2.3 and over >= 0.55:
-                scelte.append(
-                    f"{m['teams']['home']['name']} - {m['teams']['away']['name']}"
-                )
-
-        except:
-            continue
-
-    if not scelte:
-        send("⚠️ Nessuna partita PRO Europa")
-        return
-
-    msg = "🔥 PRE MATCH PRO (EUROPA + COPPE)\n\n"
-
-    for s in scelte[:3]:
-        msg += s + "\n"
-
-    send(msg)
 
 # ==============================
 # STAT SAFE
@@ -207,7 +96,7 @@ def get_stat(stats, name):
     return 0
 
 # ==============================
-# LIVE SCAN
+# LIVE SCAN (STRATEGIA)
 # ==============================
 def live_scan():
     url = "https://v3.football.api-sports.io/fixtures?live=all"
@@ -215,10 +104,32 @@ def live_scan():
 
     for m in data.get("response", []):
         try:
+            league_id = m["league"]["id"]
+
+            # filtro Europa
+            if league_id not in LEAGUES:
+                continue
+
             match_id = m["fixture"]["id"]
 
-            if match_id in sent_matches:
+            # skip se già finita
+            if tracked_matches.get(match_id, {}).get("finished"):
                 continue
+
+            minute = m["fixture"]["status"]["elapsed"]
+            goals_home = m["goals"]["home"]
+            goals_away = m["goals"]["away"]
+            total_goals = goals_home + goals_away
+
+            match_name = f"{m['teams']['home']['name']} - {m['teams']['away']['name']}"
+
+            # init tracking
+            if match_id not in tracked_matches:
+                tracked_matches[match_id] = {
+                    "finished": False,
+                    "first_goal_sent": False,
+                    "second_half_alert": False
+                }
 
             stats = m.get("statistics")
             if not stats:
@@ -236,33 +147,50 @@ def live_scan():
             shots = int(get_stat(home_stats, "Shots on Goal")) + \
                     int(get_stat(away_stats, "Shots on Goal"))
 
-            if xg >= 1.5 and momentum >= 80 and shots >= 6:
-                send(f"""⚡ LIVE ALERT
+            # ==============================
+            # PRIMO TEMPO → GOL
+            # ==============================
+            if minute <= 45 and total_goals >= 1:
+                if not tracked_matches[match_id]["first_goal_sent"]:
+                    send(f"""✅ OVER 0.5 HT IN CASSA
 
-{m['teams']['home']['name']} - {m['teams']['away']['name']}
+{match_name}
+Minuto: {minute}
+""")
+                    tracked_matches[match_id]["finished"] = True
+                    continue
 
+            # ==============================
+            # SECONDO TEMPO → MINUTO 60
+            # ==============================
+            if minute >= 60 and total_goals == 0:
+                if not tracked_matches[match_id]["second_half_alert"]:
+
+                    if xg >= 1.2 and momentum >= 70 and shots >= 5:
+                        send(f"""⚡ OVER 1.5 SECONDO TEMPO
+
+{match_name}
+
+Minuto: {minute}
 xG: {xg}
 Momentum: {momentum}
 Tiri: {shots}
 """)
-                sent_matches.add(match_id)
+                    else:
+                        print(f"❌ PARTITA SCARTATA: {match_name}")
 
-        except:
-            continue
+                    tracked_matches[match_id]["finished"] = True
+                    continue
+
+        except Exception as e:
+            print("LIVE ERROR:", e)
 
 # ==============================
 # LOOP
 # ==============================
 def loop():
-    last_day = None
-
     while True:
         now = datetime.now(tz)
-
-        if now.hour == 18 and 30 <= now.minute <= 35 and last_day != now.date():
-            print("🚀 INVIO PRE MATCH")
-            selezione_pro()
-            last_day = now.date()
 
         if 12 <= now.hour <= 23:
             live_scan()
@@ -270,41 +198,25 @@ def loop():
         time.sleep(180)
 
 # ==============================
-# COMANDI TELEGRAM
+# TELEGRAM
 # ==============================
 @bot.message_handler(func=lambda m: True)
 def handle(msg):
-    global last_chat_id, loop_started, profit, bankroll, giocate
+    global last_chat_id, loop_started
 
     last_chat_id = msg.chat.id
     text = msg.text.lower() if msg.text else ""
 
     if text.startswith("/start"):
-        bot.reply_to(msg, "🤖 BOT PRO EUROPA ATTIVO")
+        bot.reply_to(msg, "🤖 BOT LIVE STRATEGY ATTIVO")
 
         if not loop_started:
             threading.Thread(target=loop, daemon=True).start()
             loop_started = True
 
-    elif text.startswith("/profit"):
-        bot.reply_to(msg, f"💰 Profit: {profit}")
-
-    elif text.startswith("/status"):
-        bot.reply_to(msg, f"""📊 STATO
-
-Bankroll: {bankroll}
-Profit: {profit}
-Giocate: {giocate}
-""")
-
-    elif text.startswith("/reset"):
-        profit = 0
-        bankroll = 100
-        giocate = 0
-        bot.reply_to(msg, "♻️ Reset completato")
-
-    elif text.startswith("/oggi"):
-        selezione_pro()
+    elif text.startswith("/live"):
+        live_scan()
+        bot.reply_to(msg, "🔄 Scan live eseguito")
 
     elif text.startswith("/api"):
         bot.reply_to(msg, f"API calls: {api_requests}")
@@ -312,6 +224,6 @@ Giocate: {giocate}
 # ==============================
 # START
 # ==============================
-print("🚀 BOT DEFINITIVO ATTIVO")
+print("🚀 BOT LIVE DEFINITIVO ATTIVO")
 
 bot.infinity_polling(skip_pending=True, none_stop=True)
