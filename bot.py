@@ -208,7 +208,9 @@ def live_scan():
             if match_id not in tracked_matches:
                 tracked_matches[match_id] = {"finished": False}
 
-            # HT
+            # ==============================
+            # HT (fix)
+            # ==============================
             if minute <= 45 and total_goals >= 1:
 
                 if not tracked_matches[match_id].get("ht_alert_sent"):
@@ -232,7 +234,9 @@ Risultato: {goals_home}-{goals_away}
 
                 continue
 
-            # stats
+            # ==============================
+            # STATS
+            # ==============================
             stats = m.get("statistics")
             if not stats:
                 continue
@@ -251,7 +255,10 @@ Risultato: {goals_home}-{goals_away}
 
             momentum = attacks + (shots * 2)
 
-            if minute >= 60 and total_goals == 0:
+            # ==============================
+            # NUOVA LOGICA ST
+            # ==============================
+            if minute >= 60 and total_goals <= 1:
 
                 trigger = False
 
@@ -271,6 +278,7 @@ Risultato: {goals_home}-{goals_away}
 {match_name}
 
 Minuto: {minute}
+Risultato: {goals_home}-{goals_away}
 xG: {xg}
 Momentum: {momentum}
 Tiri: {shots}
@@ -341,12 +349,10 @@ def loop():
     while True:
         now = datetime.now(tz)
 
-        # 🔥 PREMATCH 11:30
         if now.hour == 11 and 30 <= now.minute <= 35 and last_day != now.date():
             selezione_pro()
             last_day = now.date()
 
-        # LIVE
         if 12 <= now.hour <= 23:
             live_scan()
             check_results()
@@ -390,6 +396,6 @@ Giocate: {giocate}
 # ==============================
 # START
 # ==============================
-print("🚀 BOT PRO DEFINITIVO ATTIVO (PREMATCH 11:30)")
+print("🚀 BOT DEFINITIVO ATTIVO (LOGICA MIGLIORATA)")
 
 bot.infinity_polling(skip_pending=True, none_stop=True)
