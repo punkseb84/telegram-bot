@@ -29,8 +29,11 @@ bankroll = 100.0
 bets = []
 
 # ==============================
-# TELEGRAM
+# UTILS
 # ==============================
+def normalize(text):
+    return text.split('@')[0].strip().lower()
+
 def send(msg):
     if last_chat_id:
         bot.send_message(last_chat_id, msg)
@@ -81,19 +84,28 @@ def selezione_pro():
             if not (12 <= fixture_time.hour <= 23):
                 continue
 
-            scelte.append((m, 1))
+            scelte.append(m)
 
         except:
             continue
 
     msg = "🔥 PARTITE SELEZIONATE\n\n"
 
-    for m,_ in scelte[:3]:
+    for m in scelte[:3]:
         match_id = m["fixture"]["id"]
         selected_matches.add(match_id)
         msg += f"{m['teams']['home']['name']} - {m['teams']['away']['name']}\n"
 
     send(msg)
+
+# ==============================
+# STAT
+# ==============================
+def get_stat(stats, name):
+    for s in stats:
+        if s["type"] == name:
+            return s["value"] or 0
+    return 0
 
 # ==============================
 # LIVE SCAN
@@ -123,27 +135,19 @@ def live_scan():
 
             state = tracked_matches[match_id]
 
-            # ======================
             # HT
-            # ======================
             if minute <= 45:
-
                 if total >= 1 and not state.get("ht"):
-                    stake = 1
-                    odds = 1.30
-
                     bets.append({
                         "match": name,
                         "type": "HT",
-                        "stake": stake,
-                        "odds": odds,
-                        "resolved": False,
-                        "id": match_id
+                        "stake": 1,
+                        "odds": 1.30,
+                        "id": match_id,
+                        "resolved": False
                     })
-
                     send(f"✅ OVER 0.5 HT\n{name}")
                     state["ht"] = True
-
                 continue
 
             stats = m.get("statistics")
@@ -153,12 +157,6 @@ def live_scan():
             hs = stats[0]["statistics"]
             as_ = stats[1]["statistics"]
 
-            def get_stat(stats, name):
-                for s in stats:
-                    if s["type"] == name:
-                        return s["value"] or 0
-                return 0
-
             xg = float(get_stat(hs,"Expected Goals (xG)")) + float(get_stat(as_,"Expected Goals (xG)"))
             shots = int(get_stat(hs,"Shots on Goal")) + int(get_stat(as_,"Shots on Goal"))
             attacks = int(get_stat(hs,"Dangerous Attacks")) + int(get_stat(as_,"Dangerous Attacks"))
@@ -166,35 +164,27 @@ def live_scan():
             momentum = attacks + shots*2
             quality = xg / shots if shots > 0 else 0
 
-            # ======================
-            # ST
-            # ======================
             if total <= 1 and not state.get("st"):
 
                 trigger = False
 
-                if minute >= 60:
-                    if xg >= 1.2 and momentum >= 70 and shots >= 5:
-                        trigger = True
+                if minute >= 60 and xg >= 1.2 and momentum >= 70 and shots >= 5:
+                    trigger = True
 
-                if 68 <= minute <= 75:
-                    if xg >= 1.6 and momentum >= 100 and shots >= 10:
-                        trigger = True
+                if 68 <= minute <= 75 and xg >= 1.6 and momentum >= 100 and shots >= 10:
+                    trigger = True
 
-                if quality < 0.08:
+                if quality < 0.08 or shots <= 2:
                     trigger = False
 
                 if trigger:
-                    stake = 1.5
-                    odds = 1.80
-
                     bets.append({
                         "match": name,
                         "type": "ST",
-                        "stake": stake,
-                        "odds": odds,
-                        "resolved": False,
-                        "id": match_id
+                        "stake": 1.5,
+                        "odds": 1.80,
+                        "id": match_id,
+                        "resolved": False
                     })
 
                     send(f"⚡ OVER 1.5 ST\n{name}")
@@ -205,7 +195,7 @@ def live_scan():
             continue
 
 # ==============================
-# CHECK RISULTATI
+# RISULTATI
 # ==============================
 def check_results():
     global bankroll
@@ -220,9 +210,9 @@ def check_results():
             if m["fixture"]["id"] != bet["id"]:
                 continue
 
-            goals = m["goals"]["home"] + m["goals"]["away"]
-
             if m["fixture"]["status"]["short"] == "FT":
+
+                goals = m["goals"]["home"] + m["goals"]["away"]
 
                 if bet["type"] == "HT":
                     win = goals >= 1
@@ -230,8 +220,7 @@ def check_results():
                     win = goals >= 2
 
                 if win:
-                    profit = bet["stake"] * (bet["odds"] - 1)
-                    bankroll += profit
+                    bankroll += bet["stake"] * (bet["odds"] - 1)
                 else:
                     bankroll -= bet["stake"]
 
@@ -260,24 +249,62 @@ def loop():
             time.sleep(10)
 
 # ==============================
-# TELEGRAM
+# TELEGRAM COMANDI
 # ==============================
 @bot.message_handler(func=lambda m: True)
 def handle(msg):
     global last_chat_id
     last_chat_id = msg.chat.id
 
-    if msg.text.lower() == "/bank":
-        bot.reply_to(msg, f"Bankroll: {round(bankroll,2)}")
+    text = normalize(msg.text)
 
-    elif msg.text.lower() == "/bets":
-        bot.reply_to(msg, str(bets))
+    if text == "/start":
+        bot.reply_to(msg, "🤖 BOT TRADER ATTIVO")
 
-    elif msg.text.lower() == "/start":
-        bot.reply_to(msg, "BOT TRADER ATTIVO")
+    elif text == "/bank":
+        bot.reply_to(msg, f"💰 Bankroll: {round(bankroll,2)}")
+
+    elif text == "/profit":
+        profit = bankroll - 100
+        bot.reply_to(msg, f"📈 Profit: {round(profit,2)}")
+
+    elif text == "/roi":
+        total_stake = sum(b["stake"] for b in bets if b["resolved"])
+        profit = bankroll - 100
+        roi = (profit / total_stake * 100) if total_stake > 0 else 0
+        bot.reply_to(msg, f"📊 ROI: {round(roi,2)}%")
+
+    elif text == "/bets":
+        if not bets:
+            bot.reply_to(msg, "Nessuna scommessa")
+        else:
+            txt = "\n".join([f"{b['match']} - {b['type']} - {b['stake']}" for b in bets])
+            bot.reply_to(msg, txt)
+
+    elif text == "/open":
+        open_bets = [b for b in bets if not b["resolved"]]
+        if not open_bets:
+            bot.reply_to(msg, "Nessuna scommessa aperta")
+        else:
+            txt = "\n".join([f"{b['match']} - {b['type']}" for b in open_bets])
+            bot.reply_to(msg, txt)
+
+    elif text == "/reset":
+        global bankroll, bets
+        bankroll = 100
+        bets = []
+        bot.reply_to(msg, "🔄 Reset completato")
+
+    elif text == "/oggi":
+        selezione_pro()
+
+    elif text == "/api":
+        bot.reply_to(msg, f"API calls: {api_requests}")
 
 # ==============================
 # START
 # ==============================
+print("🚀 BOT TRADER PRO ATTIVO")
+
 threading.Thread(target=loop, daemon=True).start()
 bot.infinity_polling(skip_pending=True)
