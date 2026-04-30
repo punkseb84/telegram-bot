@@ -24,6 +24,9 @@ api_requests = 0
 selected_matches = set()
 tracked_matches = {}
 
+# 🔥 BLOCCO GIORNALIERO
+last_day = None
+
 # 💰 BANKROLL
 bankroll = 100.0
 bets = []
@@ -57,13 +60,21 @@ def api_call(url):
         return {}
 
 # ==============================
-# PREMATCH
+# PREMATCH (FIX DEFINITIVO)
 # ==============================
 def selezione_pro():
-    global selected_matches
+    global selected_matches, last_day
+
+    today = datetime.now(tz).date()
+
+    # 🔒 blocco giornaliero
+    if last_day == today:
+        send("⚠️ Partite già selezionate oggi")
+        return
+
+    last_day = today
     selected_matches.clear()
 
-    today = datetime.now(tz).strftime("%Y-%m-%d")
     data = api_call(f"https://v3.football.api-sports.io/fixtures?date={today}")
 
     now = datetime.now(tz)
@@ -135,7 +146,9 @@ def live_scan():
 
             state = tracked_matches[match_id]
 
+            # ======================
             # HT
+            # ======================
             if minute <= 45:
                 if total >= 1 and not state.get("ht"):
                     bets.append({
@@ -168,9 +181,11 @@ def live_scan():
 
                 trigger = False
 
+                # trigger 60
                 if minute >= 60 and xg >= 1.2 and momentum >= 70 and shots >= 5:
                     trigger = True
 
+                # trigger 70
                 if 68 <= minute <= 75 and xg >= 1.6 and momentum >= 100 and shots >= 10:
                     trigger = True
 
@@ -230,15 +245,13 @@ def check_results():
 # LOOP
 # ==============================
 def loop():
-    last_day = None
-
     while True:
         try:
             now = datetime.now(tz)
 
-            if now.hour == 11 and 30 <= now.minute <= 35 and last_day != now.date():
+            # selezione automatica
+            if now.hour == 11 and 30 <= now.minute <= 35:
                 selezione_pro()
-                last_day = now.date()
 
             live_scan()
             check_results()
@@ -265,29 +278,19 @@ def handle(msg):
         bot.reply_to(msg, f"💰 Bankroll: {round(bankroll,2)}")
 
     elif text == "/profit":
-        profit = bankroll - 100
-        bot.reply_to(msg, f"📈 Profit: {round(profit,2)}")
+        bot.reply_to(msg, f"📈 Profit: {round(bankroll-100,2)}")
 
     elif text == "/roi":
-        total_stake = sum(b["stake"] for b in bets if b["resolved"])
-        profit = bankroll - 100
-        roi = (profit / total_stake * 100) if total_stake > 0 else 0
+        total = sum(b["stake"] for b in bets if b["resolved"])
+        roi = ((bankroll-100)/total*100) if total > 0 else 0
         bot.reply_to(msg, f"📊 ROI: {round(roi,2)}%")
 
     elif text == "/bets":
-        if not bets:
-            bot.reply_to(msg, "Nessuna scommessa")
-        else:
-            txt = "\n".join([f"{b['match']} - {b['type']} - {b['stake']}" for b in bets])
-            bot.reply_to(msg, txt)
+        bot.reply_to(msg, "\n".join([f"{b['match']} - {b['type']}" for b in bets]) or "Nessuna")
 
     elif text == "/open":
         open_bets = [b for b in bets if not b["resolved"]]
-        if not open_bets:
-            bot.reply_to(msg, "Nessuna scommessa aperta")
-        else:
-            txt = "\n".join([f"{b['match']} - {b['type']}" for b in open_bets])
-            bot.reply_to(msg, txt)
+        bot.reply_to(msg, "\n".join([b["match"] for b in open_bets]) or "Nessuna")
 
     elif text == "/reset":
         bankroll = 100
@@ -303,7 +306,7 @@ def handle(msg):
 # ==============================
 # START
 # ==============================
-print("🚀 BOT TRADER FIXATO ATTIVO")
+print("🚀 BOT TRADER DEFINITIVO ATTIVO")
 
 threading.Thread(target=loop, daemon=True).start()
 bot.infinity_polling(skip_pending=True)
