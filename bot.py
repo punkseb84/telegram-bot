@@ -1,6 +1,6 @@
 # =========================================================
-# BOT TRADER PRO ELITE ULTRA
-# QUADRUPLE LEAGUES + SMART PREMATCH ENGINE
+# BOT TRADER PRO DEBUG LIVE
+# VERSIONE CON DEBUG ENGINE COMPLETO
 # =========================================================
 
 import telebot
@@ -8,7 +8,6 @@ import os
 import requests
 import threading
 import time
-import sqlite3
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -24,172 +23,20 @@ bot = telebot.TeleBot(TOKEN)
 
 tz = ZoneInfo("Europe/Rome")
 
+DEBUG_MODE = True
+
 START_HOUR = 14
 END_HOUR = 21
 
-BASE_BANKROLL = 100.0
-
 # =========================================================
-# VALUE ODDS
-# =========================================================
-
-MIN_VALUE_ODDS = 1.55
-MAX_VALUE_ODDS = 2.40
-
-# =========================================================
-# RISK
-# =========================================================
-
-MAX_OPEN_BETS = 3
-
-# =========================================================
-# LEAGUES (QUADRUPLICATE)
+# LEAGUES
 # =========================================================
 
 LEAGUES = [
-
-    # =====================================
-    # TOP EUROPE
-    # =====================================
-
-    39,   # Premier League
-    140,  # La Liga
-    135,  # Serie A
-    78,   # Bundesliga
-    61,   # Ligue 1
-
-    # =====================================
-    # OFFENSIVE EUROPE
-    # =====================================
-
-    88,   # Eredivisie
-    94,   # Portugal
-    144,  # Belgium
-    207,  # Switzerland
-    197,  # Denmark
-    119,  # Norway
-    113,  # Sweden
-    179,  # Finland
-    203,  # Turkey
-    218,  # Czech
-    235,  # Saudi
-    98,   # Japan
-    292,  # Korea
-    253,  # MLS
-    188,  # Australia
-
-    # =====================================
-    # SECOND DIVISIONS
-    # =====================================
-
-    72,73,74,
-    79,141,136,
-    62,244,
-
-    # =====================================
-    # EXTRA EUROPE
-    # =====================================
-
-    103,104,105,
-    106,107,108,
-    109,110,111,
-    112,114,115,
-    116,117,118,
-    120,121,122,
-    123,124,125,
-    126,127,128,
-
-    # =====================================
-    # SOUTH AMERICA
-    # =====================================
-
-    71,129,130,
-    131,132,133,
-    134,265,266,
-    267,268,269,
-
-    # =====================================
-    # EAST EUROPE
-    # =====================================
-
-    219,220,221,
-    222,223,224,
-    225,226,227,
-    228,229,230,
-
-    # =====================================
-    # AFRICA / MIDDLE EAST
-    # =====================================
-
-    236,237,238,
-    239,240,241,
-    242,243,245,
-
-    # =====================================
-    # ASIA
-    # =====================================
-
-    307,308,309,
-    310,311,312,
-    313,314,315,
-
-    # =====================================
-    # CENTRAL AMERICA
-    # =====================================
-
-    270,271,272,
-    273,274,275,
-
-    # =====================================
-    # EXTRA
-    # =====================================
-
-    143,145,146,
-    147,148,149,
-    150,151,152,
-    153,154,155,
-    156,157,158,
-    159,160,161,
-    162,163,164,
-    165,166,167,
-
-    # =====================================
-    # ULTRA EXTRA
-    # =====================================
-
-    168,169,170,
-    171,172,173,
-    174,175,176,
-    177,178,180,
-    181,182,183,
-    184,185,186,
-    187,189,190,
-    191,192,193,
-    194,195,196
-]
-
-# =========================================================
-# OFFENSIVE PRIORITY
-# =========================================================
-
-OFFENSIVE_PRIORITY = [
-
-    88,
-    144,
-    119,
-    113,
-    179,
-    98,
-    292,
-    39,
-    78,
-    94,
-    197,
-    207,
-    253,
-    188,
-    203,
-    235
+    39,140,135,78,61,
+    88,144,119,113,
+    179,98,292,253,
+    188,94,197,207
 ]
 
 # =========================================================
@@ -198,49 +45,20 @@ OFFENSIVE_PRIORITY = [
 
 last_chat_id = None
 
-api_requests = 0
-
 selected_matches = {}
 
-last_day = None
+tracked_matches = {}
 
-cache = {}
-team_stats_cache = {}
-
-# =========================================================
-# DATABASE
-# =========================================================
-
-conn = sqlite3.connect(
-    "trader.db",
-    check_same_thread=False
-)
-
-cursor = conn.cursor()
-
-cursor.execute("""
-
-CREATE TABLE IF NOT EXISTS selections (
-
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    match_name TEXT,
-    league TEXT,
-    score REAL,
-    created_at TEXT
-
-)
-
-""")
-
-conn.commit()
+api_requests = 0
 
 # =========================================================
 # UTILS
 # =========================================================
 
-def normalize(text):
+def log(*args):
 
-    return text.split("@")[0].strip().lower()
+    if DEBUG_MODE:
+        print("[DEBUG]", *args)
 
 def send(msg):
 
@@ -254,8 +72,12 @@ def send(msg):
                 msg
             )
 
-        except:
-            pass
+        except Exception as e:
+            print(e)
+
+def normalize(text):
+
+    return text.split("@")[0].strip().lower()
 
 # =========================================================
 # API
@@ -287,356 +109,34 @@ def api_call(url):
 
     except Exception as e:
 
-        print("API ERROR", e)
+        log("API ERROR", e)
 
         return {}
 
 # =========================================================
-# CACHE
+# STATS
 # =========================================================
 
-def cached_api_call(url, ttl=3600):
+def get_stat(stats, name):
 
-    now = time.time()
+    for s in stats:
 
-    if url in cache:
-
-        ts, data = cache[url]
-
-        if now - ts < ttl:
-            return data
-
-    data = api_call(url)
-
-    cache[url] = (
-        now,
-        data
-    )
-
-    return data
-
-# =========================================================
-# TEAM STATS
-# =========================================================
-
-def get_team_stats(team_id, league_id):
-
-    key = f"{team_id}_{league_id}"
-
-    if key in team_stats_cache:
-
-        ts, data = team_stats_cache[key]
-
-        if time.time() - ts < 86400:
-            return data
-
-    url = (
-
-        f"https://v3.football.api-sports.io/"
-        f"teams/statistics?"
-        f"league={league_id}&"
-        f"season=2026&"
-        f"team={team_id}"
-
-    )
-
-    data = cached_api_call(
-        url,
-        ttl=86400
-    )
-
-    team_stats_cache[key] = (
-        time.time(),
-        data
-    )
-
-    return data
-
-# =========================================================
-# ANALYZE TEAM
-# =========================================================
-
-def analyze_team(team_data):
-
-    try:
-
-        played = (
-            team_data["response"]
-            ["fixtures"]["played"]["total"]
-        )
-
-        goals_for = (
-            team_data["response"]
-            ["goals"]["for"]["total"]["total"]
-        )
-
-        goals_against = (
-            team_data["response"]
-            ["goals"]["against"]["total"]["total"]
-        )
-
-        avg_for = goals_for / played
-        avg_against = goals_against / played
-
-        total_avg = avg_for + avg_against
-
-        return {
-
-            "avg_for": avg_for,
-            "avg_against": avg_against,
-            "total_avg": total_avg
-
-        }
-
-    except:
-
-        return {
-
-            "avg_for": 1,
-            "avg_against": 1,
-            "total_avg": 2
-
-        }
-
-# =========================================================
-# PREMATCH ODDS
-# =========================================================
-
-def get_prematch_odds(fixture_id):
-
-    try:
-
-        data = cached_api_call(
-
-            f"https://v3.football.api-sports.io/"
-            f"odds?fixture={fixture_id}",
-
-            ttl=3600
-        )
-
-        bookmakers = (
-            data["response"][0]
-            ["bookmakers"]
-        )
-
-        for bookmaker in bookmakers:
-
-            for bet in bookmaker["bets"]:
-
-                if bet["name"] == "Over/Under":
-
-                    for value in bet["values"]:
-
-                        if value["value"] == "Over 2.5":
-
-                            return float(
-                                value["odd"]
-                            )
-
-    except:
-        return None
-
-    return None
-
-# =========================================================
-# RECENT GOALS
-# =========================================================
-
-def get_recent_goals(team_id):
-
-    try:
-
-        data = cached_api_call(
-
-            f"https://v3.football.api-sports.io/"
-            f"fixtures?team={team_id}&last=5",
-
-            ttl=3600
-        )
-
-        matches = data["response"]
-
-        total = 0
-
-        for m in matches:
-
-            total += (
-                m["goals"]["home"] +
-                m["goals"]["away"]
-            )
-
-        return total / len(matches)
-
-    except:
-        return 2
-
-# =========================================================
-# DEFENSIVE FILTER
-# =========================================================
-
-def defensive_penalty(avg):
-
-    if avg < 1.8:
-        return -50
-
-    if avg < 2.2:
-        return -20
+        if s["type"] == name:
+            return s["value"] or 0
 
     return 0
 
 # =========================================================
-# SCORE MATCH
-# =========================================================
-
-def score_match(match):
-
-    try:
-
-        score = 0
-
-        fixture_id = match["fixture"]["id"]
-
-        league_id = match["league"]["id"]
-
-        home_id = (
-            match["teams"]["home"]["id"]
-        )
-
-        away_id = (
-            match["teams"]["away"]["id"]
-        )
-
-        # =====================================
-        # LEAGUE BONUS
-        # =====================================
-
-        if league_id in OFFENSIVE_PRIORITY:
-            score += 50
-
-        # =====================================
-        # TIME BONUS
-        # =====================================
-
-        kickoff = datetime.fromisoformat(
-
-            match["fixture"]["date"].replace(
-                "Z",
-                "+00:00"
-            )
-
-        ).astimezone(tz)
-
-        if 17 <= kickoff.hour <= 20:
-            score += 20
-
-        # =====================================
-        # ODDS FILTER
-        # =====================================
-
-        odds = get_prematch_odds(
-            fixture_id
-        )
-
-        if odds:
-
-            if odds <= 1.65:
-                score += 50
-
-            elif odds <= 1.80:
-                score += 35
-
-            elif odds <= 2:
-                score += 15
-
-            elif odds >= 2.5:
-                score -= 40
-
-        # =====================================
-        # TEAM STATS
-        # =====================================
-
-        home_stats = analyze_team(
-            get_team_stats(
-                home_id,
-                league_id
-            )
-        )
-
-        away_stats = analyze_team(
-            get_team_stats(
-                away_id,
-                league_id
-            )
-        )
-
-        total_avg = (
-
-            home_stats["total_avg"] +
-            away_stats["total_avg"]
-
-        )
-
-        score += total_avg * 15
-
-        # =====================================
-        # DEFENSIVE FILTER
-        # =====================================
-
-        score += defensive_penalty(
-            home_stats["total_avg"]
-        )
-
-        score += defensive_penalty(
-            away_stats["total_avg"]
-        )
-
-        # =====================================
-        # RECENT GOALS
-        # =====================================
-
-        recent_home = get_recent_goals(
-            home_id
-        )
-
-        recent_away = get_recent_goals(
-            away_id
-        )
-
-        score += (
-            recent_home +
-            recent_away
-        ) * 6
-
-        return round(score, 2)
-
-    except Exception as e:
-
-        print("SCORE ERROR", e)
-
-        return 0
-
-# =========================================================
-# PREMATCH ENGINE
+# PREMATCH
 # =========================================================
 
 def selezione_pro():
 
     global selected_matches
-    global last_day
-
-    today = datetime.now(tz).date()
-
-    if last_day == today:
-
-        send(
-            "⚠️ Partite già selezionate oggi"
-        )
-
-        return
-
-    last_day = today
 
     selected_matches.clear()
+
+    today = datetime.now(tz).date()
 
     data = api_call(
 
@@ -648,10 +148,6 @@ def selezione_pro():
     now = datetime.now(tz)
 
     candidates = []
-
-    # =====================================
-    # FAST FILTER
-    # =====================================
 
     for m in data.get("response", []):
 
@@ -679,134 +175,381 @@ def selezione_pro():
             ):
                 continue
 
-            base = 0
-
-            if league_id in OFFENSIVE_PRIORITY:
-                base += 50
-
-            if 17 <= kickoff.hour <= 20:
-                base += 20
-
-            candidates.append(
-                (base, m)
-            )
+            candidates.append(m)
 
         except:
             continue
 
-    # =====================================
-    # SHORTLIST
-    # =====================================
+    top = candidates[:3]
 
-    candidates.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
+    msg = "🔥 PARTITE DEBUG\n\n"
 
-    shortlist = [
+    for m in top:
 
-        x[1]
+        fixture_id = m["fixture"]["id"]
 
-        for x in candidates[:40]
+        home = m["teams"]["home"]["name"]
+        away = m["teams"]["away"]["name"]
 
-    ]
-
-    # =====================================
-    # ADVANCED ANALYSIS
-    # =====================================
-
-    scored = []
-
-    for m in shortlist:
-
-        s = score_match(m)
-
-        scored.append((s, m))
-
-    scored.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
-
-    top = scored[:3]
-
-    # =====================================
-    # OUTPUT
-    # =====================================
-
-    msg = (
-        "🔥 PARTITE SELEZIONATE\n\n"
-    )
-
-    for score, m in top:
-
-        match_id = (
-            m["fixture"]["id"]
-        )
-
-        home = (
-            m["teams"]["home"]["name"]
-        )
-
-        away = (
-            m["teams"]["away"]["name"]
-        )
-
-        league = (
-            m["league"]["name"]
-        )
-
-        kickoff = datetime.fromisoformat(
-
-            m["fixture"]["date"].replace(
-                "Z",
-                "+00:00"
-            )
-
-        ).astimezone(tz).strftime("%H:%M")
-
-        selected_matches[match_id] = {
+        selected_matches[fixture_id] = {
 
             "home": home,
-            "away": away,
-            "league": league,
-            "kickoff": kickoff,
-            "score": score
+            "away": away
 
         }
 
-        cursor.execute("""
-
-        INSERT INTO selections (
-            match_name,
-            league,
-            score,
-            created_at
-        )
-
-        VALUES (?,?,?,?)
-
-        """, (
-
-            f"{home} - {away}",
-            league,
-            score,
-            datetime.now().isoformat()
-
-        ))
-
-        conn.commit()
-
-        msg += (
-
-            f"⚽ {home} - {away}\n"
-            f"🏆 {league}\n"
-            f"🕒 {kickoff}\n"
-            f"📈 Score: {score}\n\n"
-
-        )
+        msg += f"{home} - {away}\n"
 
     send(msg)
+
+    log("SELECTED MATCHES", selected_matches)
+
+# =========================================================
+# LIVE DEBUG ENGINE
+# =========================================================
+
+def live_scan():
+
+    data = api_call(
+
+        "https://v3.football.api-sports.io/"
+        "fixtures?live=all"
+
+    )
+
+    live_matches = data.get("response", [])
+
+    log("LIVE MATCHES FOUND", len(live_matches))
+
+    for m in live_matches:
+
+        try:
+
+            fixture_id = m["fixture"]["id"]
+
+            home = m["teams"]["home"]["name"]
+            away = m["teams"]["away"]["name"]
+
+            match_name = f"{home} - {away}"
+
+            # =============================================
+            # CHECK IF TRACKED
+            # =============================================
+
+            if fixture_id not in selected_matches:
+
+                log(
+                    "SKIP NOT SELECTED",
+                    match_name
+                )
+
+                continue
+
+            log(
+                "TRACKING MATCH",
+                match_name
+            )
+
+            minute = (
+                m["fixture"]["status"]["elapsed"]
+            )
+
+            home_goals = m["goals"]["home"]
+            away_goals = m["goals"]["away"]
+
+            total_goals = (
+                home_goals + away_goals
+            )
+
+            log(
+                "MATCH STATE",
+                match_name,
+                "MIN",
+                minute,
+                "GOALS",
+                total_goals
+            )
+
+            # =============================================
+            # STATS CHECK
+            # =============================================
+
+            stats = m.get("statistics")
+
+            if not stats:
+
+                log(
+                    "NO STATS",
+                    match_name
+                )
+
+                continue
+
+            log(
+                "STATS OK",
+                match_name
+            )
+
+            try:
+
+                hs = stats[0]["statistics"]
+                as_ = stats[1]["statistics"]
+
+            except Exception as e:
+
+                log(
+                    "STATS PARSE ERROR",
+                    match_name,
+                    e
+                )
+
+                continue
+
+            # =============================================
+            # XG
+            # =============================================
+
+            try:
+
+                xg = (
+
+                    float(
+                        get_stat(
+                            hs,
+                            "Expected Goals (xG)"
+                        )
+                    )
+
+                    +
+
+                    float(
+                        get_stat(
+                            as_,
+                            "Expected Goals (xG)"
+                        )
+                    )
+
+                )
+
+            except:
+
+                xg = 0
+
+            # =============================================
+            # SHOTS
+            # =============================================
+
+            try:
+
+                shots = (
+
+                    int(
+                        get_stat(
+                            hs,
+                            "Shots on Goal"
+                        )
+                    )
+
+                    +
+
+                    int(
+                        get_stat(
+                            as_,
+                            "Shots on Goal"
+                        )
+                    )
+
+                )
+
+            except:
+
+                shots = 0
+
+            # =============================================
+            # ATTACKS
+            # =============================================
+
+            try:
+
+                attacks = (
+
+                    int(
+                        get_stat(
+                            hs,
+                            "Dangerous Attacks"
+                        )
+                    )
+
+                    +
+
+                    int(
+                        get_stat(
+                            as_,
+                            "Dangerous Attacks"
+                        )
+                    )
+
+                )
+
+            except:
+
+                attacks = 0
+
+            # =============================================
+            # CORNERS
+            # =============================================
+
+            try:
+
+                corners = (
+
+                    int(
+                        get_stat(
+                            hs,
+                            "Corner Kicks"
+                        )
+                    )
+
+                    +
+
+                    int(
+                        get_stat(
+                            as_,
+                            "Corner Kicks"
+                        )
+                    )
+
+                )
+
+            except:
+
+                corners = 0
+
+            momentum = (
+                attacks +
+                shots * 2
+            )
+
+            # =============================================
+            # DEBUG VALUES
+            # =============================================
+
+            log(
+
+                "LIVE VALUES",
+
+                match_name,
+
+                "MIN", minute,
+
+                "XG", xg,
+
+                "SHOTS", shots,
+
+                "ATTACKS", attacks,
+
+                "MOMENTUM", momentum,
+
+                "CORNERS", corners
+            )
+
+            # =============================================
+            # TRIGGER CHECK
+            # =============================================
+
+            trigger = False
+
+            if (
+                minute >= 60
+                and total_goals <= 1
+                and xg >= 1.2
+                and momentum >= 70
+                and shots >= 5
+            ):
+
+                trigger = True
+
+            log(
+
+                "TRIGGER CHECK",
+
+                match_name,
+
+                "RESULT",
+
+                trigger
+            )
+
+            # =============================================
+            # WHY NO TRIGGER
+            # =============================================
+
+            if not trigger:
+
+                if minute < 60:
+                    log("FAIL MINUTE")
+
+                if total_goals > 1:
+                    log("FAIL GOALS")
+
+                if xg < 1.2:
+                    log("FAIL XG")
+
+                if momentum < 70:
+                    log("FAIL MOMENTUM")
+
+                if shots < 5:
+                    log("FAIL SHOTS")
+
+            # =============================================
+            # SIGNAL
+            # =============================================
+
+            if trigger:
+
+                if not tracked_matches.get(fixture_id):
+
+                    tracked_matches[fixture_id] = True
+
+                    log(
+                        "TRIGGERED",
+                        match_name
+                    )
+
+                    send(
+
+                        f"⚡ DEBUG TRIGGER\n\n"
+                        f"{match_name}\n"
+                        f"🕒 {minute}'\n"
+                        f"📈 xG {xg}\n"
+                        f"🎯 Shots {shots}\n"
+                        f"⚡ Momentum {momentum}"
+
+                    )
+
+        except Exception as e:
+
+            log("LIVE ERROR", e)
+
+# =========================================================
+# LOOP
+# =========================================================
+
+def loop():
+
+    while True:
+
+        try:
+
+            live_scan()
+
+            time.sleep(30)
+
+        except Exception as e:
+
+            log("LOOP ERROR", e)
+
+            time.sleep(10)
 
 # =========================================================
 # TELEGRAM
@@ -821,114 +564,72 @@ def handle(msg):
 
     text = normalize(msg.text)
 
-    # =====================================
+    # =============================================
     # START
-    # =====================================
+    # =============================================
 
     if text == "/start":
 
         bot.reply_to(
 
             msg,
-            "🤖 BOT TRADER PRO ELITE ULTRA ATTIVO"
+            "🤖 DEBUG BOT ATTIVO"
 
         )
 
-    # =====================================
-    # TODAY
-    # =====================================
-
-    elif text == "/today":
-
-        if not selected_matches:
-
-            bot.reply_to(
-                msg,
-                "Nessuna partita attiva"
-            )
-
-        else:
-
-            txt = (
-                "📅 PARTITE ATTIVE\n\n"
-            )
-
-            for _, v in selected_matches.items():
-
-                txt += (
-
-                    f"{v['home']} - "
-                    f"{v['away']}\n"
-
-                    f"{v['league']}\n"
-
-                    f"🕒 {v['kickoff']}\n"
-
-                    f"📈 Score "
-                    f"{v['score']}\n\n"
-
-                )
-
-            bot.reply_to(
-                msg,
-                txt
-            )
-
-    # =====================================
+    # =============================================
     # OGGI
-    # =====================================
+    # =============================================
 
     elif text == "/oggi":
 
         selezione_pro()
 
-    # =====================================
+    # =============================================
     # API
-    # =====================================
+    # =============================================
 
     elif text == "/api":
 
         bot.reply_to(
 
             msg,
-            f"📡 API Calls: "
-            f"{api_requests}"
+            f"📡 API CALLS {api_requests}"
 
         )
 
-# =========================================================
-# LOOP
-# =========================================================
+    # =============================================
+    # DEBUG
+    # =============================================
 
-def loop():
+    elif text == "/debug":
 
-    while True:
+        txt = (
 
-        try:
+            "🧠 DEBUG STATUS\n\n"
 
-            now = datetime.now(tz)
+            f"Tracked matches: "
+            f"{len(selected_matches)}\n"
 
-            if (
-                now.hour == 11
-                and 30 <= now.minute <= 35
-            ):
+            f"Triggered: "
+            f"{len(tracked_matches)}\n"
 
-                selezione_pro()
+            f"API Calls: "
+            f"{api_requests}\n"
 
-            time.sleep(60)
+            f"Debug mode: "
+            f"{DEBUG_MODE}"
 
-        except Exception as e:
+        )
 
-            print("LOOP ERROR", e)
-
-            time.sleep(10)
+        bot.reply_to(msg, txt)
 
 # =========================================================
 # START
 # =========================================================
 
 print(
-    "🚀 BOT TRADER PRO ELITE ULTRA AVVIATO"
+    "🚀 BOT DEBUG LIVE AVVIATO"
 )
 
 threading.Thread(
