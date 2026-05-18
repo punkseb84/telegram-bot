@@ -1,6 +1,6 @@
 # =========================================================
-# BOT TRADER PRO ELITE ULTRA + DEBUG
-# VERSIONE COMPLETA
+# BOT TRADER PRO ELITE ULTRA + LIVE STATS FIX
+# VERSIONE CORRETTA DOPO DEBUG API-FOOTBALL
 # =========================================================
 
 import telebot
@@ -31,8 +31,7 @@ DEBUG_MODE = True
 START_HOUR = 14
 END_HOUR = 21
 
-MIN_VALUE_ODDS = 1.55
-MAX_VALUE_ODDS = 2.40
+LIVE_INTERVAL = 30
 
 # =========================================================
 # LEAGUES
@@ -57,20 +56,9 @@ LEAGUES = [
 
     218,219,220,
     221,222,223,
-    224,225,226,
 
     235,236,237,
-    238,239,240,
-
-    307,308,309,
-    310,311,312,
-
-    71,128,129,
-    130,131,132,
-    133,134,
-
-    265,266,267,
-    268,269,270
+    238,239,240
 ]
 
 OFFENSIVE_PRIORITY = [
@@ -104,15 +92,12 @@ selected_matches = {}
 
 triggered_matches = {}
 
-tracked_live = {}
-
-cache = {}
-team_stats_cache = {}
+stats_cache = {}
 
 last_day = None
 
 # =========================================================
-# DATABASE
+# DB
 # =========================================================
 
 conn = sqlite3.connect(
@@ -128,7 +113,6 @@ CREATE TABLE IF NOT EXISTS selections (
 
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     match_name TEXT,
-    league TEXT,
     score REAL,
     created_at TEXT
 
@@ -146,7 +130,7 @@ bot.set_my_commands([
 
     types.BotCommand(
         "start",
-        "Avvia il bot"
+        "Avvia bot"
     ),
 
     types.BotCommand(
@@ -160,13 +144,13 @@ bot.set_my_commands([
     ),
 
     types.BotCommand(
-        "api",
-        "API calls"
+        "debug",
+        "Debug live"
     ),
 
     types.BotCommand(
-        "debug",
-        "Debug live"
+        "api",
+        "API usage"
     )
 
 ])
@@ -179,10 +163,6 @@ def log(*args):
 
     if DEBUG_MODE:
         print("[DEBUG]", *args)
-
-def normalize(text):
-
-    return text.split("@")[0].strip().lower()
 
 def send(msg):
 
@@ -198,8 +178,11 @@ def send(msg):
             )
 
         except Exception as e:
-
             print(e)
+
+def normalize(text):
+
+    return text.split("@")[0].strip().lower()
 
 # =========================================================
 # API
@@ -236,23 +219,36 @@ def api_call(url):
         return {}
 
 # =========================================================
-# CACHE
+# GET STATS API
 # =========================================================
 
-def cached_api_call(url, ttl=3600):
+def get_fixture_statistics(fixture_id):
 
     now = time.time()
 
-    if url in cache:
+    # =============================================
+    # CACHE 20 sec
+    # =============================================
 
-        ts, data = cache[url]
+    if fixture_id in stats_cache:
 
-        if now - ts < ttl:
+        ts, data = stats_cache[fixture_id]
+
+        if now - ts < 20:
+
             return data
+
+    url = (
+
+        f"https://v3.football.api-sports.io/"
+        f"fixtures/statistics?"
+        f"fixture={fixture_id}"
+
+    )
 
     data = api_call(url)
 
-    cache[url] = (
+    stats_cache[fixture_id] = (
         now,
         data
     )
@@ -265,15 +261,6 @@ def cached_api_call(url, ttl=3600):
 
 def get_team_stats(team_id, league_id):
 
-    key = f"{team_id}_{league_id}"
-
-    if key in team_stats_cache:
-
-        ts, data = team_stats_cache[key]
-
-        if time.time() - ts < 86400:
-            return data
-
     url = (
 
         f"https://v3.football.api-sports.io/"
@@ -284,132 +271,32 @@ def get_team_stats(team_id, league_id):
 
     )
 
-    data = cached_api_call(
-        url,
-        ttl=86400
-    )
-
-    team_stats_cache[key] = (
-        time.time(),
-        data
-    )
-
-    return data
+    return api_call(url)
 
 # =========================================================
 # ANALYZE TEAM
 # =========================================================
 
-def analyze_team(team_data):
+def analyze_team(data):
 
     try:
 
         played = (
-            team_data["response"]
+            data["response"]
             ["fixtures"]["played"]["total"]
         )
 
-        goals_for = (
-            team_data["response"]
+        gf = (
+            data["response"]
             ["goals"]["for"]["total"]["total"]
         )
 
-        goals_against = (
-            team_data["response"]
+        ga = (
+            data["response"]
             ["goals"]["against"]["total"]["total"]
         )
 
-        avg_for = goals_for / played
-        avg_against = goals_against / played
-
-        total_avg = avg_for + avg_against
-
-        return {
-
-            "avg_for": avg_for,
-            "avg_against": avg_against,
-            "total_avg": total_avg
-
-        }
-
-    except:
-
-        return {
-
-            "avg_for": 1,
-            "avg_against": 1,
-            "total_avg": 2
-
-        }
-
-# =========================================================
-# ODDS
-# =========================================================
-
-def get_prematch_odds(fixture_id):
-
-    try:
-
-        data = cached_api_call(
-
-            f"https://v3.football.api-sports.io/"
-            f"odds?fixture={fixture_id}",
-
-            ttl=3600
-        )
-
-        bookmakers = (
-            data["response"][0]
-            ["bookmakers"]
-        )
-
-        for bookmaker in bookmakers:
-
-            for bet in bookmaker["bets"]:
-
-                if bet["name"] == "Over/Under":
-
-                    for value in bet["values"]:
-
-                        if value["value"] == "Over 2.5":
-
-                            return float(
-                                value["odd"]
-                            )
-
-    except:
-        return None
-
-    return None
-
-# =========================================================
-# RECENT GOALS
-# =========================================================
-
-def get_recent_goals(team_id):
-
-    try:
-
-        data = cached_api_call(
-
-            f"https://v3.football.api-sports.io/"
-            f"fixtures?team={team_id}&last=5",
-
-            ttl=3600
-        )
-
-        matches = data["response"]
-
-        total = 0
-
-        for m in matches:
-
-            total += (
-                m["goals"]["home"] +
-                m["goals"]["away"]
-            )
-
-        return total / len(matches)
+        return (gf + ga) / played
 
     except:
         return 2
@@ -424,9 +311,13 @@ def score_match(match):
 
         score = 0
 
-        fixture_id = match["fixture"]["id"]
+        fixture_id = (
+            match["fixture"]["id"]
+        )
 
-        league_id = match["league"]["id"]
+        league_id = (
+            match["league"]["id"]
+        )
 
         home_id = (
             match["teams"]["home"]["id"]
@@ -436,8 +327,16 @@ def score_match(match):
             match["teams"]["away"]["id"]
         )
 
+        # =========================================
+        # OFFENSIVE LEAGUE
+        # =========================================
+
         if league_id in OFFENSIVE_PRIORITY:
             score += 50
+
+        # =========================================
+        # TIME BONUS
+        # =========================================
 
         kickoff = datetime.fromisoformat(
 
@@ -451,23 +350,9 @@ def score_match(match):
         if 17 <= kickoff.hour <= 20:
             score += 20
 
-        odds = get_prematch_odds(
-            fixture_id
-        )
-
-        if odds:
-
-            if odds <= 1.65:
-                score += 50
-
-            elif odds <= 1.80:
-                score += 35
-
-            elif odds <= 2:
-                score += 15
-
-            elif odds >= 2.5:
-                score -= 40
+        # =========================================
+        # TEAM STATS
+        # =========================================
 
         home_stats = analyze_team(
             get_team_stats(
@@ -483,27 +368,10 @@ def score_match(match):
             )
         )
 
-        total_avg = (
-
-            home_stats["total_avg"] +
-            away_stats["total_avg"]
-
-        )
-
-        score += total_avg * 15
-
-        recent_home = get_recent_goals(
-            home_id
-        )
-
-        recent_away = get_recent_goals(
-            away_id
-        )
-
         score += (
-            recent_home +
-            recent_away
-        ) * 6
+            home_stats +
+            away_stats
+        ) * 10
 
         return round(score, 2)
 
@@ -527,7 +395,7 @@ def selezione_pro():
     if last_day == today:
 
         send(
-            "⚠️ Partite già selezionate oggi"
+            "⚠️ Selezione già effettuata oggi"
         )
 
         return
@@ -545,13 +413,15 @@ def selezione_pro():
 
     now = datetime.now(tz)
 
-    candidates = []
+    scored = []
 
     for m in data.get("response", []):
 
         try:
 
-            league_id = m["league"]["id"]
+            league_id = (
+                m["league"]["id"]
+            )
 
             if league_id not in LEAGUES:
                 continue
@@ -573,41 +443,14 @@ def selezione_pro():
             ):
                 continue
 
-            base = 0
+            score = score_match(m)
 
-            if league_id in OFFENSIVE_PRIORITY:
-                base += 50
-
-            if 17 <= kickoff.hour <= 20:
-                base += 20
-
-            candidates.append(
-                (base, m)
+            scored.append(
+                (score, m)
             )
 
         except:
             continue
-
-    candidates.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
-
-    shortlist = [
-
-        x[1]
-
-        for x in candidates[:40]
-
-    ]
-
-    scored = []
-
-    for m in shortlist:
-
-        s = score_match(m)
-
-        scored.append((s, m))
 
     scored.sort(
         key=lambda x: x[0],
@@ -622,7 +465,7 @@ def selezione_pro():
 
     for score, m in top:
 
-        match_id = (
+        fixture_id = (
             m["fixture"]["id"]
         )
 
@@ -647,7 +490,7 @@ def selezione_pro():
 
         ).astimezone(tz).strftime("%H:%M")
 
-        selected_matches[match_id] = {
+        selected_matches[fixture_id] = {
 
             "home": home,
             "away": away,
@@ -668,8 +511,6 @@ def selezione_pro():
 
     send(msg)
 
-    log("SELECTED", selected_matches)
-
 # =========================================================
 # GET STAT
 # =========================================================
@@ -679,15 +520,20 @@ def get_stat(stats, name):
     for s in stats:
 
         if s["type"] == name:
+
             return s["value"] or 0
 
     return 0
 
 # =========================================================
-# LIVE ENGINE + DEBUG
+# LIVE ENGINE FIXED
 # =========================================================
 
 def live_scan():
+
+    # =============================================
+    # LIVE FIXTURES
+    # =============================================
 
     data = api_call(
 
@@ -704,21 +550,32 @@ def live_scan():
 
         try:
 
-            fixture_id = m["fixture"]["id"]
+            fixture_id = (
+                m["fixture"]["id"]
+            )
 
             if fixture_id not in selected_matches:
                 continue
 
-            home = m["teams"]["home"]["name"]
-            away = m["teams"]["away"]["name"]
+            home = (
+                m["teams"]["home"]["name"]
+            )
 
-            match_name = f"{home} - {away}"
+            away = (
+                m["teams"]["away"]["name"]
+            )
 
-            log("TRACKING", match_name)
+            match_name = (
+                f"{home} - {away}"
+            )
 
             minute = (
-                m["fixture"]["status"]["elapsed"]
+                m["fixture"]["status"]
+                ["elapsed"]
             )
+
+            if not minute:
+                continue
 
             home_goals = (
                 m["goals"]["home"] or 0
@@ -732,12 +589,34 @@ def live_scan():
                 home_goals + away_goals
             )
 
-            stats = m.get("statistics")
+            log(
 
-            if not stats:
+                "TRACKING",
+
+                match_name,
+
+                "MIN",
+
+                minute
+
+            )
+
+            # =====================================
+            # REAL STATISTICS API
+            # =====================================
+
+            stats_data = get_fixture_statistics(
+                fixture_id
+            )
+
+            stats_response = (
+                stats_data.get("response", [])
+            )
+
+            if len(stats_response) < 2:
 
                 log(
-                    "NO STATS",
+                    "NO STATS API",
                     match_name
                 )
 
@@ -745,43 +624,27 @@ def live_scan():
 
             try:
 
-                hs = stats[0]["statistics"]
-                as_ = stats[1]["statistics"]
+                hs = stats_response[0][
+                    "statistics"
+                ]
+
+                as_ = stats_response[1][
+                    "statistics"
+                ]
 
             except Exception as e:
 
                 log(
-                    "STATS ERROR",
+                    "STATS PARSE ERROR",
                     match_name,
                     e
                 )
 
                 continue
 
-            try:
-
-                xg = (
-
-                    float(
-                        get_stat(
-                            hs,
-                            "Expected Goals (xG)"
-                        )
-                    )
-
-                    +
-
-                    float(
-                        get_stat(
-                            as_,
-                            "Expected Goals (xG)"
-                        )
-                    )
-
-                )
-
-            except:
-                xg = 0
+            # =====================================
+            # SHOTS
+            # =====================================
 
             try:
 
@@ -808,30 +671,9 @@ def live_scan():
             except:
                 shots = 0
 
-            try:
-
-                attacks = (
-
-                    int(
-                        get_stat(
-                            hs,
-                            "Dangerous Attacks"
-                        )
-                    )
-
-                    +
-
-                    int(
-                        get_stat(
-                            as_,
-                            "Dangerous Attacks"
-                        )
-                    )
-
-                )
-
-            except:
-                attacks = 0
+            # =====================================
+            # CORNERS
+            # =====================================
 
             try:
 
@@ -858,14 +700,81 @@ def live_scan():
             except:
                 corners = 0
 
+            # =====================================
+            # ATTACKS
+            # =====================================
+
+            try:
+
+                attacks = (
+
+                    int(
+                        get_stat(
+                            hs,
+                            "Dangerous Attacks"
+                        )
+                    )
+
+                    +
+
+                    int(
+                        get_stat(
+                            as_,
+                            "Dangerous Attacks"
+                        )
+                    )
+
+                )
+
+            except:
+                attacks = 0
+
+            # =====================================
+            # XG
+            # =====================================
+
+            try:
+
+                xg = (
+
+                    float(
+                        get_stat(
+                            hs,
+                            "Expected Goals (xG)"
+                        )
+                    )
+
+                    +
+
+                    float(
+                        get_stat(
+                            as_,
+                            "Expected Goals (xG)"
+                        )
+                    )
+
+                )
+
+            except:
+                xg = 0
+
+            # =====================================
+            # MOMENTUM
+            # =====================================
+
             momentum = (
                 attacks +
-                shots * 2
+                shots * 2 +
+                corners
             )
+
+            # =====================================
+            # DEBUG
+            # =====================================
 
             log(
 
-                "LIVE",
+                "LIVE DATA",
 
                 match_name,
 
@@ -879,33 +788,54 @@ def live_scan():
 
                 "ATTACKS", attacks,
 
-                "MOMENTUM", momentum,
+                "CORNERS", corners,
 
-                "CORNERS", corners
+                "MOMENTUM", momentum
 
             )
+
+            # =====================================
+            # TRIGGER
+            # =====================================
 
             trigger = False
 
             if (
                 minute >= 60
                 and total_goals <= 1
-                and xg >= 1.2
-                and momentum >= 70
                 and shots >= 5
+                and momentum >= 60
             ):
 
                 trigger = True
 
-            log(
-                "TRIGGER CHECK",
-                match_name,
-                trigger
-            )
+            # =====================================
+            # DEBUG FAIL
+            # =====================================
+
+            if not trigger:
+
+                if minute < 60:
+                    log("FAIL MINUTE")
+
+                if total_goals > 1:
+                    log("FAIL GOALS")
+
+                if shots < 5:
+                    log("FAIL SHOTS")
+
+                if momentum < 60:
+                    log("FAIL MOMENTUM")
+
+            # =====================================
+            # ALERT
+            # =====================================
 
             if trigger:
 
-                if not triggered_matches.get(fixture_id):
+                if not triggered_matches.get(
+                    fixture_id
+                ):
 
                     triggered_matches[
                         fixture_id
@@ -921,13 +851,13 @@ def live_scan():
 
                         f"⚽ Goals {total_goals}\n"
 
-                        f"📈 xG {xg}\n"
-
                         f"🎯 Shots {shots}\n"
 
-                        f"⚡ Momentum {momentum}\n"
+                        f"⚡ Attacks {attacks}\n"
 
-                        f"🚩 Corners {corners}"
+                        f"🚩 Corners {corners}\n"
+
+                        f"📈 Momentum {momentum}"
 
                     )
 
@@ -961,7 +891,7 @@ def loop():
 
             live_scan()
 
-            time.sleep(30)
+            time.sleep(LIVE_INTERVAL)
 
         except Exception as e:
 
@@ -992,7 +922,7 @@ def handle(msg):
 
             msg,
 
-            "🤖 BOT TRADER PRO ELITE ULTRA + DEBUG ATTIVO"
+            "🤖 BOT TRADER PRO ELITE ULTRA FIXED"
 
         )
 
@@ -1054,7 +984,7 @@ def handle(msg):
 
             msg,
 
-            f"📡 API Calls: "
+            f"📡 API CALLS: "
             f"{api_requests}"
 
         )
@@ -1093,7 +1023,7 @@ def handle(msg):
 # =========================================================
 
 print(
-    "🚀 BOT TRADER PRO ELITE ULTRA + DEBUG AVVIATO"
+    "🚀 BOT TRADER PRO ELITE ULTRA FIXED STARTED"
 )
 
 threading.Thread(
