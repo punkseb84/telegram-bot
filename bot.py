@@ -1,6 +1,6 @@
 # =========================================================
-# BOT TRADER PRO ELITE ULTRA + LIVE STATS FIX
-# VERSIONE CORRETTA DOPO DEBUG API-FOOTBALL
+# BOT TRADER PRO ELITE ULTRA
+# VERSIONE DATA-ADAPTIVE REALISTICA
 # =========================================================
 
 import telebot
@@ -28,10 +28,10 @@ tz = ZoneInfo("Europe/Rome")
 
 DEBUG_MODE = True
 
+LIVE_INTERVAL = 30
+
 START_HOUR = 14
 END_HOUR = 21
-
-LIVE_INTERVAL = 30
 
 # =========================================================
 # LEAGUES
@@ -130,7 +130,7 @@ bot.set_my_commands([
 
     types.BotCommand(
         "start",
-        "Avvia bot"
+        "Avvia il bot"
     ),
 
     types.BotCommand(
@@ -144,13 +144,13 @@ bot.set_my_commands([
     ),
 
     types.BotCommand(
-        "debug",
-        "Debug live"
+        "api",
+        "API usage"
     ),
 
     types.BotCommand(
-        "api",
-        "API usage"
+        "debug",
+        "Debug status"
     )
 
 ])
@@ -178,6 +178,7 @@ def send(msg):
             )
 
         except Exception as e:
+
             print(e)
 
 def normalize(text):
@@ -219,23 +220,18 @@ def api_call(url):
         return {}
 
 # =========================================================
-# GET STATS API
+# STATS CACHE
 # =========================================================
 
 def get_fixture_statistics(fixture_id):
 
     now = time.time()
 
-    # =============================================
-    # CACHE 20 sec
-    # =============================================
-
     if fixture_id in stats_cache:
 
         ts, data = stats_cache[fixture_id]
 
         if now - ts < 20:
-
             return data
 
     url = (
@@ -311,10 +307,6 @@ def score_match(match):
 
         score = 0
 
-        fixture_id = (
-            match["fixture"]["id"]
-        )
-
         league_id = (
             match["league"]["id"]
         )
@@ -335,7 +327,7 @@ def score_match(match):
             score += 50
 
         # =========================================
-        # TIME BONUS
+        # KICKOFF BONUS
         # =========================================
 
         kickoff = datetime.fromisoformat(
@@ -520,29 +512,44 @@ def get_stat(stats, name):
     for s in stats:
 
         if s["type"] == name:
+            return s["value"]
 
-            return s["value"] or 0
-
-    return 0
+    return None
 
 # =========================================================
-# LIVE ENGINE FIXED
+# SAFE INT
+# =========================================================
+
+def safe_int(v):
+
+    try:
+
+        if v is None:
+            return 0
+
+        if isinstance(v, str):
+
+            v = v.replace("%", "")
+
+        return int(float(v))
+
+    except:
+        return 0
+
+# =========================================================
+# LIVE ENGINE
 # =========================================================
 
 def live_scan():
 
-    # =============================================
-    # LIVE FIXTURES
-    # =============================================
-
-    data = api_call(
+    live = api_call(
 
         "https://v3.football.api-sports.io/"
         "fixtures?live=all"
 
     )
 
-    matches = data.get("response", [])
+    matches = live.get("response", [])
 
     log("LIVE FOUND", len(matches))
 
@@ -589,20 +596,8 @@ def live_scan():
                 home_goals + away_goals
             )
 
-            log(
-
-                "TRACKING",
-
-                match_name,
-
-                "MIN",
-
-                minute
-
-            )
-
             # =====================================
-            # REAL STATISTICS API
+            # STATISTICS API
             # =====================================
 
             stats_data = get_fixture_statistics(
@@ -616,157 +611,220 @@ def live_scan():
             if len(stats_response) < 2:
 
                 log(
-                    "NO STATS API",
+                    "NO STATS",
                     match_name
                 )
 
                 continue
 
-            try:
+            hs = stats_response[0]["statistics"]
+            as_ = stats_response[1]["statistics"]
 
-                hs = stats_response[0][
-                    "statistics"
-                ]
+            # =====================================
+            # REAL PARAMETERS
+            # =====================================
 
-                as_ = stats_response[1][
-                    "statistics"
-                ]
+            shots_on_goal = (
 
-            except Exception as e:
-
-                log(
-                    "STATS PARSE ERROR",
-                    match_name,
-                    e
+                safe_int(
+                    get_stat(
+                        hs,
+                        "Shots on Goal"
+                    )
                 )
 
-                continue
+                +
 
-            # =====================================
-            # SHOTS
-            # =====================================
+                safe_int(
+                    get_stat(
+                        as_,
+                        "Shots on Goal"
+                    )
+                )
+
+            )
+
+            total_shots = (
+
+                safe_int(
+                    get_stat(
+                        hs,
+                        "Total Shots"
+                    )
+                )
+
+                +
+
+                safe_int(
+                    get_stat(
+                        as_,
+                        "Total Shots"
+                    )
+                )
+
+            )
+
+            corners = (
+
+                safe_int(
+                    get_stat(
+                        hs,
+                        "Corner Kicks"
+                    )
+                )
+
+                +
+
+                safe_int(
+                    get_stat(
+                        as_,
+                        "Corner Kicks"
+                    )
+                )
+
+            )
+
+            possession_home = safe_int(
+
+                get_stat(
+                    hs,
+                    "Ball Possession"
+                )
+
+            )
+
+            possession_away = safe_int(
+
+                get_stat(
+                    as_,
+                    "Ball Possession"
+                )
+
+            )
+
+            passes = (
+
+                safe_int(
+                    get_stat(
+                        hs,
+                        "Total passes"
+                    )
+                )
+
+                +
+
+                safe_int(
+                    get_stat(
+                        as_,
+                        "Total passes"
+                    )
+                )
+
+            )
+
+            xg_home = get_stat(
+                hs,
+                "expected_goals"
+            )
+
+            xg_away = get_stat(
+                as_,
+                "expected_goals"
+            )
+
+            xg = 0
 
             try:
 
-                shots = (
+                if xg_home:
+                    xg += float(xg_home)
 
-                    int(
-                        get_stat(
-                            hs,
-                            "Shots on Goal"
-                        )
-                    )
-
-                    +
-
-                    int(
-                        get_stat(
-                            as_,
-                            "Shots on Goal"
-                        )
-                    )
-
-                )
-
-            except:
-                shots = 0
-
-            # =====================================
-            # CORNERS
-            # =====================================
-
-            try:
-
-                corners = (
-
-                    int(
-                        get_stat(
-                            hs,
-                            "Corner Kicks"
-                        )
-                    )
-
-                    +
-
-                    int(
-                        get_stat(
-                            as_,
-                            "Corner Kicks"
-                        )
-                    )
-
-                )
-
-            except:
-                corners = 0
-
-            # =====================================
-            # ATTACKS
-            # =====================================
-
-            try:
-
-                attacks = (
-
-                    int(
-                        get_stat(
-                            hs,
-                            "Dangerous Attacks"
-                        )
-                    )
-
-                    +
-
-                    int(
-                        get_stat(
-                            as_,
-                            "Dangerous Attacks"
-                        )
-                    )
-
-                )
-
-            except:
-                attacks = 0
-
-            # =====================================
-            # XG
-            # =====================================
-
-            try:
-
-                xg = (
-
-                    float(
-                        get_stat(
-                            hs,
-                            "Expected Goals (xG)"
-                        )
-                    )
-
-                    +
-
-                    float(
-                        get_stat(
-                            as_,
-                            "Expected Goals (xG)"
-                        )
-                    )
-
-                )
+                if xg_away:
+                    xg += float(xg_away)
 
             except:
                 xg = 0
 
             # =====================================
-            # MOMENTUM
+            # PRESSURE
+            # =====================================
+
+            possession_pressure = 0
+
+            if (
+                possession_home >= 60
+                or possession_away >= 60
+            ):
+
+                possession_pressure = 10
+
+            pass_pressure = 0
+
+            if passes >= 700:
+                pass_pressure = 10
+
+            elif passes >= 500:
+                pass_pressure = 5
+
+            # =====================================
+            # MOMENTUM ENGINE
             # =====================================
 
             momentum = (
-                attacks +
-                shots * 2 +
-                corners
+
+                total_shots * 3 +
+
+                shots_on_goal * 4 +
+
+                corners * 2 +
+
+                possession_pressure +
+
+                pass_pressure
+
             )
+
+            # =====================================
+            # TRIGGER SCORE
+            # =====================================
+
+            trigger_score = 0
+
+            if total_shots >= 10:
+                trigger_score += 20
+
+            if total_shots >= 14:
+                trigger_score += 10
+
+            if shots_on_goal >= 4:
+                trigger_score += 20
+
+            if shots_on_goal >= 6:
+                trigger_score += 10
+
+            if corners >= 6:
+                trigger_score += 15
+
+            if corners >= 9:
+                trigger_score += 10
+
+            if momentum >= 55:
+                trigger_score += 20
+
+            if momentum >= 75:
+                trigger_score += 10
+
+            if xg >= 1.2:
+                trigger_score += 10
+
+            # =====================================
+            # LATE GAME BOOST
+            # =====================================
+
+            required_score = 60
+
+            if minute >= 75:
+                required_score = 50
 
             # =====================================
             # DEBUG
@@ -774,7 +832,7 @@ def live_scan():
 
             log(
 
-                "LIVE DATA",
+                "LIVE",
 
                 match_name,
 
@@ -782,20 +840,24 @@ def live_scan():
 
                 "GOALS", total_goals,
 
-                "XG", xg,
+                "SOG", shots_on_goal,
 
-                "SHOTS", shots,
-
-                "ATTACKS", attacks,
+                "TS", total_shots,
 
                 "CORNERS", corners,
 
-                "MOMENTUM", momentum
+                "PASSES", passes,
+
+                "XG", xg,
+
+                "MOMENTUM", momentum,
+
+                "TRIGGER", trigger_score
 
             )
 
             # =====================================
-            # TRIGGER
+            # FINAL TRIGGER
             # =====================================
 
             trigger = False
@@ -803,8 +865,7 @@ def live_scan():
             if (
                 minute >= 60
                 and total_goals <= 1
-                and shots >= 5
-                and momentum >= 60
+                and trigger_score >= required_score
             ):
 
                 trigger = True
@@ -821,14 +882,15 @@ def live_scan():
                 if total_goals > 1:
                     log("FAIL GOALS")
 
-                if shots < 5:
-                    log("FAIL SHOTS")
-
-                if momentum < 60:
-                    log("FAIL MOMENTUM")
+                if trigger_score < required_score:
+                    log(
+                        "FAIL SCORE",
+                        trigger_score,
+                        required_score
+                    )
 
             # =====================================
-            # ALERT
+            # SEND SIGNAL
             # =====================================
 
             if trigger:
@@ -849,15 +911,13 @@ def live_scan():
 
                         f"🕒 {minute}'\n"
 
-                        f"⚽ Goals {total_goals}\n"
+                        f"⚽ Goals {total_goals}\n\n"
 
-                        f"🎯 Shots {shots}\n"
-
-                        f"⚡ Attacks {attacks}\n"
-
+                        f"🎯 SOG {shots_on_goal}\n"
+                        f"📈 Total Shots {total_shots}\n"
                         f"🚩 Corners {corners}\n"
-
-                        f"📈 Momentum {momentum}"
+                        f"🧠 Momentum {momentum}\n"
+                        f"🔥 Trigger Score {trigger_score}"
 
                     )
 
@@ -922,7 +982,7 @@ def handle(msg):
 
             msg,
 
-            "🤖 BOT TRADER PRO ELITE ULTRA FIXED"
+            "🤖 BOT TRADER PRO ELITE ULTRA ONLINE"
 
         )
 
@@ -1023,7 +1083,7 @@ def handle(msg):
 # =========================================================
 
 print(
-    "🚀 BOT TRADER PRO ELITE ULTRA FIXED STARTED"
+    "🚀 BOT TRADER PRO ELITE ULTRA STARTED"
 )
 
 threading.Thread(
