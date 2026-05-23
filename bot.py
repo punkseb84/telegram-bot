@@ -1,7 +1,6 @@
 # =========================================================
-# BOT TRADER PRO ELITE ULTRA AI
-# FULL VERSION
-# PREMATCH + LIVE + ODDS + TRACKING + PERFORMANCE
+# BOT TRADER PRO ELITE AI
+# OPTIMIZED VERSION
 # =========================================================
 
 import telebot
@@ -34,6 +33,8 @@ LIVE_INTERVAL = 30
 START_HOUR = 14
 END_HOUR = 21
 
+MAX_SELECTED_MATCHES = 3
+
 # =========================================================
 # LEAGUES
 # =========================================================
@@ -53,13 +54,7 @@ LEAGUES = [
     103,104,105,
     106,107,108,
     109,110,111,
-    112,114,115,
-
-    218,219,220,
-    221,222,223,
-
-    235,236,237,
-    238,239,240
+    112,114,115
 ]
 
 OFFENSIVE_PRIORITY = [
@@ -70,15 +65,12 @@ OFFENSIVE_PRIORITY = [
     113,
     179,
     98,
-    292,
     39,
     78,
     94,
     197,
     207,
-    253,
-    188,
-    235
+    253
 ]
 
 # =========================================================
@@ -96,6 +88,10 @@ triggered_matches = {}
 stats_cache = {}
 
 odds_cache = {}
+
+team_stats_cache = {}
+
+coverage_memory = {}
 
 last_day = None
 
@@ -158,6 +154,22 @@ CREATE TABLE IF NOT EXISTS trigger_history (
 
 """)
 
+cursor.execute("""
+
+CREATE TABLE IF NOT EXISTS league_coverage (
+
+    league_id INTEGER PRIMARY KEY,
+
+    league_name TEXT,
+
+    matches_checked INTEGER DEFAULT 0,
+
+    stats_available INTEGER DEFAULT 0
+
+)
+
+""")
+
 conn.commit()
 
 # =========================================================
@@ -189,6 +201,11 @@ bot.set_my_commands([
     types.BotCommand(
         "oddsperf",
         "Performance odds"
+    ),
+
+    types.BotCommand(
+        "coverage",
+        "Coverage leghe"
     ),
 
     types.BotCommand(
@@ -308,7 +325,7 @@ def get_stat(stats, name):
     return None
 
 # =========================================================
-# STATS CACHE
+# FIXTURE STATS CACHE
 # =========================================================
 
 def get_fixture_statistics(fixture_id):
@@ -340,7 +357,7 @@ def get_fixture_statistics(fixture_id):
     return data
 
 # =========================================================
-# LIVE ODDS
+# LIVE ODDS CACHE
 # =========================================================
 
 def get_live_odds(fixture_id):
@@ -351,7 +368,7 @@ def get_live_odds(fixture_id):
 
         ts, data = odds_cache[fixture_id]
 
-        if now - ts < 60:
+        if now - ts < 90:
             return data
 
     url = (
@@ -368,6 +385,39 @@ def get_live_odds(fixture_id):
         now,
         data
     )
+
+    return data
+
+# =========================================================
+# TEAM STATS CACHE
+# =========================================================
+
+def get_team_stats(team_id, league_id):
+
+    today = str(
+        datetime.now(tz).date()
+    )
+
+    cache_key = (
+        f"{today}_{league_id}_{team_id}"
+    )
+
+    if cache_key in team_stats_cache:
+        return team_stats_cache[cache_key]
+
+    url = (
+
+        f"https://v3.football.api-sports.io/"
+        f"teams/statistics?"
+        f"league={league_id}&"
+        f"season=2026&"
+        f"team={team_id}"
+
+    )
+
+    data = api_call(url)
+
+    team_stats_cache[cache_key] = data
 
     return data
 
@@ -472,24 +522,6 @@ def odds_pressure_score(odd):
     return score
 
 # =========================================================
-# TEAM STATS
-# =========================================================
-
-def get_team_stats(team_id, league_id):
-
-    url = (
-
-        f"https://v3.football.api-sports.io/"
-        f"teams/statistics?"
-        f"league={league_id}&"
-        f"season=2026&"
-        f"team={team_id}"
-
-    )
-
-    return api_call(url)
-
-# =========================================================
 # ANALYZE TEAM
 # =========================================================
 
@@ -518,6 +550,134 @@ def analyze_team(data):
         return 2
 
 # =========================================================
+# COVERAGE RATE
+# =========================================================
+
+def get_coverage_bonus(league_id):
+
+    cursor.execute("""
+
+    SELECT
+
+        matches_checked,
+        stats_available
+
+    FROM league_coverage
+
+    WHERE league_id = ?
+
+    """, (league_id,))
+
+    row = cursor.fetchone()
+
+    if not row:
+        return 0
+
+    checked = row[0]
+    available = row[1]
+
+    if checked < 5:
+        return 0
+
+    rate = (
+        available / checked
+    ) * 100
+
+    if rate >= 90:
+        return 40
+
+    elif rate >= 75:
+        return 25
+
+    elif rate <= 50:
+        return -30
+
+    return 0
+
+# =========================================================
+# UPDATE COVERAGE
+# =========================================================
+
+def update_coverage(
+
+    league_id,
+    league_name,
+    stats_found
+
+):
+
+    cursor.execute("""
+
+    SELECT
+
+        matches_checked,
+        stats_available
+
+    FROM league_coverage
+
+    WHERE league_id = ?
+
+    """, (league_id,))
+
+    row = cursor.fetchone()
+
+    if row:
+
+        checked = row[0] + 1
+        available = row[1]
+
+        if stats_found:
+            available += 1
+
+        cursor.execute("""
+
+        UPDATE league_coverage
+
+        SET
+
+            matches_checked = ?,
+            stats_available = ?
+
+        WHERE league_id = ?
+
+        """, (
+
+            checked,
+            available,
+            league_id
+
+        ))
+
+    else:
+
+        checked = 1
+        available = 1 if stats_found else 0
+
+        cursor.execute("""
+
+        INSERT INTO league_coverage (
+
+            league_id,
+            league_name,
+            matches_checked,
+            stats_available
+
+        )
+
+        VALUES (?, ?, ?, ?)
+
+        """, (
+
+            league_id,
+            league_name,
+            checked,
+            available
+
+        ))
+
+    conn.commit()
+
+# =========================================================
 # SCORE MATCH
 # =========================================================
 
@@ -533,6 +693,14 @@ def score_match(match):
 
         if league_id in OFFENSIVE_PRIORITY:
             score += 50
+
+        coverage_bonus = (
+            get_coverage_bonus(
+                league_id
+            )
+        )
+
+        score += coverage_bonus
 
         kickoff = datetime.fromisoformat(
 
@@ -584,17 +752,12 @@ def score_match(match):
 
 def selezione_pro():
 
-    global last_day
     global selected_matches
+    global last_day
 
     today = datetime.now(tz).date()
 
     if last_day == today:
-
-        send(
-            "⚠️ Selezione già effettuata"
-        )
-
         return
 
     last_day = today
@@ -659,7 +822,7 @@ def selezione_pro():
         reverse=True
     )
 
-    top = scored[:3]
+    top = scored[:MAX_SELECTED_MATCHES]
 
     txt = (
         "🔥 PARTITE SELEZIONATE\n\n"
@@ -697,8 +860,11 @@ def selezione_pro():
             "home": home,
             "away": away,
             "league": league,
-            "score": score,
-            "kickoff": kickoff
+            "league_id": (
+                m["league"]["id"]
+            ),
+            "kickoff": kickoff,
+            "score": score
 
         }
 
@@ -823,6 +989,8 @@ def check_finished_matches():
 
     WHERE result_checked = 0
 
+    LIMIT 5
+
     """)
 
     rows = cursor.fetchall()
@@ -938,11 +1106,6 @@ def live_scan():
         []
     )
 
-    log(
-        "LIVE FOUND",
-        len(matches)
-    )
-
     for m in matches:
 
         try:
@@ -961,6 +1124,18 @@ def live_scan():
 
             if not minute:
                 continue
+
+            league_id = (
+                selected_matches[
+                    fixture_id
+                ]["league_id"]
+            )
+
+            league_name = (
+                selected_matches[
+                    fixture_id
+                ]["league"]
+            )
 
             home = (
                 m["teams"]["home"]["name"]
@@ -995,7 +1170,19 @@ def live_scan():
                 []
             )
 
+            # =====================================================
+            # COVERAGE TRACKING
+            # =====================================================
+
             if len(response) < 2:
+
+                update_coverage(
+
+                    league_id,
+                    league_name,
+                    False
+
+                )
 
                 log(
                     "NO STATS",
@@ -1003,6 +1190,14 @@ def live_scan():
                 )
 
                 continue
+
+            update_coverage(
+
+                league_id,
+                league_name,
+                True
+
+            )
 
             hs = response[0]["statistics"]
             as_ = response[1]["statistics"]
@@ -1088,7 +1283,7 @@ def live_scan():
                     xg += float(xg_away)
 
             except:
-                xg = 0
+                pass
 
             momentum = (
 
@@ -1105,21 +1300,6 @@ def live_scan():
             # =====================================================
 
             if shots_on_goal < 4:
-
-                log(
-                    "FAIL SOG",
-                    match_name
-                )
-
-                continue
-
-            if xg < 1.2:
-
-                log(
-                    "FAIL XG",
-                    match_name
-                )
-
                 continue
 
             trigger_score = 0
@@ -1152,14 +1332,21 @@ def live_scan():
             if momentum >= 80:
                 trigger_score += 10
 
-            if xg >= 1.5:
+            # =====================================================
+            # XG BONUS ONLY
+            # =====================================================
+
+            if xg >= 1.2:
                 trigger_score += 15
 
-            if xg >= 2:
+            if xg >= 1.8:
+                trigger_score += 10
+
+            if xg >= 2.5:
                 trigger_score += 10
 
             # =====================================================
-            # LIVE ODDS
+            # ODDS ONLY FOR GOOD MATCHES
             # =====================================================
 
             live_odd = None
@@ -1168,7 +1355,7 @@ def live_scan():
 
                 minute >= 60
 
-                and momentum >= 50
+                and trigger_score >= 40
 
             ):
 
@@ -1193,12 +1380,6 @@ def live_scan():
             if live_odd:
 
                 if live_odd >= 3.50:
-
-                    log(
-                        "DEAD MARKET",
-                        match_name
-                    )
-
                     continue
 
             required_score = 65
@@ -1368,7 +1549,7 @@ def handle(msg):
 
             msg,
 
-            "🚀 BOT TRADER PRO ELITE ONLINE"
+            "🚀 BOT TRADER PRO ELITE AI ONLINE"
 
         )
 
@@ -1540,6 +1721,67 @@ def handle(msg):
             )
 
     # =====================================================
+    # COVERAGE
+    # =====================================================
+
+    elif text.startswith("/coverage"):
+
+        cursor.execute("""
+
+        SELECT
+
+            league_name,
+            matches_checked,
+            stats_available
+
+        FROM league_coverage
+
+        ORDER BY stats_available DESC
+
+        LIMIT 10
+
+        """)
+
+        rows = cursor.fetchall()
+
+        if not rows:
+
+            bot.reply_to(
+                msg,
+                "Nessun dato"
+            )
+
+        else:
+
+            txt = (
+                "📡 LIVE COVERAGE\n\n"
+            )
+
+            for r in rows:
+
+                league = r[0]
+                checked = r[1]
+                available = r[2]
+
+                rate = round(
+                    available / checked * 100,
+                    1
+                )
+
+                txt += (
+
+                    f"{league}\n"
+
+                    f"Coverage: {rate}%\n\n"
+
+                )
+
+            bot.reply_to(
+                msg,
+                txt
+            )
+
+    # =====================================================
     # API
     # =====================================================
 
@@ -1573,8 +1815,14 @@ def handle(msg):
             f"API Calls: "
             f"{api_requests}\n"
 
-            f"Debug Mode: "
-            f"{DEBUG_MODE}"
+            f"Stats Cache: "
+            f"{len(stats_cache)}\n"
+
+            f"Odds Cache: "
+            f"{len(odds_cache)}\n"
+
+            f"Team Cache: "
+            f"{len(team_stats_cache)}"
 
         )
 
@@ -1588,7 +1836,7 @@ def handle(msg):
 # =========================================================
 
 print(
-    "🚀 BOT TRADER PRO ELITE AI STARTED"
+    "🚀 BOT TRADER PRO ELITE AI OPTIMIZED STARTED"
 )
 
 threading.Thread(
