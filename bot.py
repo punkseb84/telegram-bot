@@ -1,7 +1,6 @@
 # =========================================================
 # BOT TRADER PRO ELITE AI
-# ULTRA STABLE VERSION
-# SSL FIX + RETRY + SESSION REUSE
+# FINAL STABLE VERSION
 # =========================================================
 
 import telebot
@@ -40,7 +39,7 @@ END_HOUR = 21
 MAX_SELECTED_MATCHES = 3
 
 # =========================================================
-# SESSION REUSE + RETRY SYSTEM
+# SESSION + RETRY
 # =========================================================
 
 session = requests.Session()
@@ -316,7 +315,7 @@ def normalize(text):
     return text.split("@")[0].lower().strip()
 
 # =========================================================
-# API CALL ULTRA STABLE
+# API CALL
 # =========================================================
 
 def api_call(url):
@@ -346,7 +345,6 @@ def api_call(url):
 
         api_requests += 1
 
-        # anti burst
         time.sleep(0.2)
 
         return r.json()
@@ -457,7 +455,7 @@ def get_live_odds(fixture_id):
     return data
 
 # =========================================================
-# TEAM CACHE
+# TEAM STATS CACHE
 # =========================================================
 
 def get_team_stats(team_id, league_id):
@@ -544,7 +542,13 @@ def extract_over15_odds(data):
 
         return None
 
-    except:
+    except Exception as e:
+
+        log(
+            "ODDS ERROR",
+            e
+        )
+
         return None
 
 # =========================================================
@@ -604,9 +608,18 @@ def analyze_team(data):
             ["goals"]["against"]["total"]["total"]
         )
 
+        if played == 0:
+            return 2
+
         return (gf + ga) / played
 
-    except:
+    except Exception as e:
+
+        log(
+            "TEAM ANALYZE ERROR",
+            e
+        )
+
         return 2
 
 # =========================================================
@@ -667,21 +680,36 @@ def score_match(match):
 
         return round(score, 2)
 
-    except:
+    except Exception as e:
+
+        log(
+            "SCORE ERROR",
+            e
+        )
+
         return 0
 
 # =========================================================
 # PREMATCH
 # =========================================================
 
-def selezione_pro():
+def selezione_pro(force=False):
 
     global selected_matches
     global last_day
 
     today = datetime.now(tz).date()
 
-    if last_day == today:
+    print("SELEZIONE START")
+
+    print("LAST DAY", last_day)
+
+    print("TODAY", today)
+
+    if last_day == today and not force:
+
+        print("SELEZIONE SKIPPED")
+
         return
 
     last_day = today
@@ -700,6 +728,8 @@ def selezione_pro():
         []
     )
 
+    print("MATCHES FOUND", len(matches))
+
     scored = []
 
     now = datetime.now(tz)
@@ -708,11 +738,28 @@ def selezione_pro():
 
         try:
 
+            home = (
+                m["teams"]["home"]["name"]
+            )
+
+            away = (
+                m["teams"]["away"]["name"]
+            )
+
+            print(
+                "CHECKING",
+                home,
+                away
+            )
+
             league_id = (
                 m["league"]["id"]
             )
 
             if league_id not in LEAGUES:
+
+                print("SKIP LEAGUE")
+
                 continue
 
             kickoff = datetime.fromisoformat(
@@ -724,21 +771,47 @@ def selezione_pro():
 
             ).astimezone(tz)
 
-            if kickoff <= now:
+            delta = (
+                kickoff - now
+            ).total_seconds()
+
+            # allow matches started
+            # max 30 minutes ago
+
+            if delta < -1800:
+
+                print("SKIP STARTED")
+
                 continue
 
             if not (
                 START_HOUR <= kickoff.hour <= END_HOUR
             ):
+
+                print("SKIP TIME")
+
                 continue
 
             score = score_match(m)
+
+            print(
+                "MATCH SCORE",
+                home,
+                away,
+                score
+            )
 
             scored.append(
                 (score, m)
             )
 
-        except:
+        except Exception as e:
+
+            print(
+                "PREMATCH ERROR",
+                e
+            )
+
             continue
 
     scored.sort(
@@ -747,6 +820,16 @@ def selezione_pro():
     )
 
     top = scored[:MAX_SELECTED_MATCHES]
+
+    print("TOP MATCHES", len(top))
+
+    if not top:
+
+        send(
+            "⚠ Nessuna partita valida trovata"
+        )
+
+        return
 
     txt = (
         "🔥 PARTITE SELEZIONATE\n\n"
@@ -801,216 +884,36 @@ def selezione_pro():
     send(txt)
 
 # =========================================================
-# LIVE ENGINE
+# LIVE SCAN
 # =========================================================
 
 def live_scan():
 
-    live = api_call(
+    try:
 
-        "https://v3.football.api-sports.io/"
-        "fixtures?live=all"
+        live = api_call(
 
-    )
+            "https://v3.football.api-sports.io/"
+            "fixtures?live=all"
 
-    matches = live.get(
-        "response",
-        []
-    )
+        )
 
-    for m in matches:
+        matches = live.get(
+            "response",
+            []
+        )
 
-        try:
+        log(
+            "LIVE FOUND",
+            len(matches)
+        )
 
-            fixture_id = (
-                m["fixture"]["id"]
-            )
+    except Exception as e:
 
-            if fixture_id not in selected_matches:
-                continue
-
-            minute = (
-                m["fixture"]["status"]
-                ["elapsed"]
-            )
-
-            if not minute:
-                continue
-
-            home = (
-                m["teams"]["home"]["name"]
-            )
-
-            away = (
-                m["teams"]["away"]["name"]
-            )
-
-            match_name = (
-                f"{home} - {away}"
-            )
-
-            stats_data = get_fixture_statistics(
-                fixture_id
-            )
-
-            response = stats_data.get(
-                "response",
-                []
-            )
-
-            if len(response) < 2:
-
-                live_data_status[
-                    fixture_id
-                ] = {
-
-                    "match": match_name,
-                    "minute": minute,
-
-                    "sog": False,
-                    "shots": False,
-                    "corners": False,
-                    "xg": False,
-                    "odds": False
-
-                }
-
-                continue
-
-            hs = response[0]["statistics"]
-            as_ = response[1]["statistics"]
-
-            shots_on_goal = (
-
-                safe_int(
-                    get_stat(
-                        hs,
-                        "Shots on Goal"
-                    )
-                )
-
-                +
-
-                safe_int(
-                    get_stat(
-                        as_,
-                        "Shots on Goal"
-                    )
-                )
-
-            )
-
-            total_shots = (
-
-                safe_int(
-                    get_stat(
-                        hs,
-                        "Total Shots"
-                    )
-                )
-
-                +
-
-                safe_int(
-                    get_stat(
-                        as_,
-                        "Total Shots"
-                    )
-                )
-
-            )
-
-            corners = (
-
-                safe_int(
-                    get_stat(
-                        hs,
-                        "Corner Kicks"
-                    )
-                )
-
-                +
-
-                safe_int(
-                    get_stat(
-                        as_,
-                        "Corner Kicks"
-                    )
-                )
-
-            )
-
-            xg_home = get_stat(
-                hs,
-                "expected_goals"
-            )
-
-            xg_away = get_stat(
-                as_,
-                "expected_goals"
-            )
-
-            xg = False
-
-            if xg_home or xg_away:
-                xg = True
-
-            # =====================================================
-            # LIVE FEED STATUS
-            # =====================================================
-
-            live_data_status[
-                fixture_id
-            ] = {
-
-                "match": match_name,
-
-                "minute": minute,
-
-                "sog": shots_on_goal > 0,
-
-                "shots": total_shots > 0,
-
-                "corners": corners > 0,
-
-                "xg": xg,
-
-                "odds": False
-
-            }
-
-            # =====================================================
-            # ODDS ONLY GOOD MATCHES
-            # =====================================================
-
-            if (
-
-                minute >= 60
-
-                and total_shots >= 8
-
-            ):
-
-                odds_data = get_live_odds(
-                    fixture_id
-                )
-
-                live_odd = extract_over15_odds(
-                    odds_data
-                )
-
-                if live_odd:
-
-                    live_data_status[
-                        fixture_id
-                    ]["odds"] = True
-
-        except Exception as e:
-
-            log(
-                "LIVE ERROR",
-                e
-            )
+        log(
+            "LIVE SCAN ERROR",
+            e
+        )
 
 # =========================================================
 # LOOP
@@ -1057,6 +960,8 @@ def handle(msg):
 
     text = normalize(msg.text)
 
+    print("COMMAND:", text)
+
     # =====================================================
     # START
     # =====================================================
@@ -1067,7 +972,7 @@ def handle(msg):
 
             msg,
 
-            "🚀 BOT ULTRA STABLE ONLINE"
+            "🚀 BOT FINAL STABLE ONLINE"
 
         )
 
@@ -1077,64 +982,40 @@ def handle(msg):
 
     elif text.startswith("/oggi"):
 
-        selezione_pro()
+        selezione_pro(force=True)
 
     # =====================================================
-    # LIVECHECK
+    # TODAY
     # =====================================================
 
-    elif text.startswith("/livecheck"):
+    elif text.startswith("/today"):
 
-        if not live_data_status:
+        if not selected_matches:
 
             bot.reply_to(
                 msg,
-                "Nessun dato live"
+                "Nessuna partita"
             )
 
         else:
 
             txt = (
-                "📡 LIVE FEED CHECK\n\n"
+                "📅 PARTITE ATTIVE\n\n"
             )
 
-            for _, d in live_data_status.items():
-
-                quality = 0
-
-                if d["sog"]:
-                    quality += 25
-
-                if d["shots"]:
-                    quality += 20
-
-                if d["corners"]:
-                    quality += 15
-
-                if d["xg"]:
-                    quality += 20
-
-                if d["odds"]:
-                    quality += 20
+            for _, v in selected_matches.items():
 
                 txt += (
 
-                    f"{d['match']}\n"
+                    f"{v['home']} - "
+                    f"{v['away']}\n"
 
-                    f"🕒 {d['minute']}'\n\n"
+                    f"{v['league']}\n"
 
-                    f"{'✅' if d['sog'] else '❌'} SOG\n"
+                    f"🕒 {v['kickoff']}\n"
 
-                    f"{'✅' if d['shots'] else '❌'} Shots\n"
-
-                    f"{'✅' if d['corners'] else '❌'} Corners\n"
-
-                    f"{'✅' if d['xg'] else '❌'} xG\n"
-
-                    f"{'✅' if d['odds'] else '❌'} Odds\n\n"
-
-                    f"📊 Feed Quality "
-                    f"{quality}%\n\n"
+                    f"📈 Score "
+                    f"{v['score']}\n\n"
 
                 )
 
@@ -1198,7 +1079,7 @@ def handle(msg):
 # =========================================================
 
 print(
-    "🚀 BOT ULTRA STABLE STARTED"
+    "🚀 BOT FINAL STABLE STARTED"
 )
 
 threading.Thread(
