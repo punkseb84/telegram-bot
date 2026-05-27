@@ -1,6 +1,7 @@
 # =========================================================
 # BOT TRADER PRO ELITE AI
-# OPTIMIZED VERSION
+# ULTRA STABLE VERSION
+# SSL FIX + RETRY + SESSION REUSE
 # =========================================================
 
 import telebot
@@ -11,6 +12,9 @@ import sqlite3
 import threading
 import time
 import os
+
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -34,6 +38,54 @@ START_HOUR = 14
 END_HOUR = 21
 
 MAX_SELECTED_MATCHES = 3
+
+# =========================================================
+# SESSION REUSE + RETRY SYSTEM
+# =========================================================
+
+session = requests.Session()
+
+retry_strategy = Retry(
+
+    total=3,
+
+    connect=3,
+
+    read=3,
+
+    backoff_factor=1,
+
+    status_forcelist=[
+        429,
+        500,
+        502,
+        503,
+        504
+    ],
+
+    allowed_methods=["GET"]
+
+)
+
+adapter = HTTPAdapter(
+
+    max_retries=retry_strategy,
+
+    pool_connections=50,
+
+    pool_maxsize=50
+
+)
+
+session.mount(
+    "https://",
+    adapter
+)
+
+session.mount(
+    "http://",
+    adapter
+)
 
 # =========================================================
 # LEAGUES
@@ -91,7 +143,7 @@ odds_cache = {}
 
 team_stats_cache = {}
 
-coverage_memory = {}
+live_data_status = {}
 
 last_day = None
 
@@ -209,6 +261,11 @@ bot.set_my_commands([
     ),
 
     types.BotCommand(
+        "livecheck",
+        "Controllo dati live"
+    ),
+
+    types.BotCommand(
         "api",
         "API usage"
     ),
@@ -259,7 +316,7 @@ def normalize(text):
     return text.split("@")[0].lower().strip()
 
 # =========================================================
-# API
+# API CALL ULTRA STABLE
 # =========================================================
 
 def api_call(url):
@@ -269,6 +326,7 @@ def api_call(url):
     headers = {
 
         "x-apisports-key": API_KEY,
+
         "x-rapidapi-host":
         "v3.football.api-sports.io"
 
@@ -276,19 +334,29 @@ def api_call(url):
 
     try:
 
-        r = requests.get(
+        r = session.get(
+
             url,
+
             headers=headers,
+
             timeout=20
+
         )
 
         api_requests += 1
+
+        # anti burst
+        time.sleep(0.2)
 
         return r.json()
 
     except Exception as e:
 
-        log("API ERROR", e)
+        log(
+            "API ERROR",
+            e
+        )
 
         return {}
 
@@ -357,7 +425,7 @@ def get_fixture_statistics(fixture_id):
     return data
 
 # =========================================================
-# LIVE ODDS CACHE
+# ODDS CACHE
 # =========================================================
 
 def get_live_odds(fixture_id):
@@ -389,7 +457,7 @@ def get_live_odds(fixture_id):
     return data
 
 # =========================================================
-# TEAM STATS CACHE
+# TEAM CACHE
 # =========================================================
 
 def get_team_stats(team_id, league_id):
@@ -398,12 +466,12 @@ def get_team_stats(team_id, league_id):
         datetime.now(tz).date()
     )
 
-    cache_key = (
+    key = (
         f"{today}_{league_id}_{team_id}"
     )
 
-    if cache_key in team_stats_cache:
-        return team_stats_cache[cache_key]
+    if key in team_stats_cache:
+        return team_stats_cache[key]
 
     url = (
 
@@ -417,7 +485,7 @@ def get_team_stats(team_id, league_id):
 
     data = api_call(url)
 
-    team_stats_cache[cache_key] = data
+    team_stats_cache[key] = data
 
     return data
 
@@ -451,36 +519,28 @@ def extract_over15_odds(data):
 
             for bet in bets:
 
-                name = bet.get(
+                if "Over/Under" not in bet.get(
                     "name",
                     ""
-                )
+                ):
+                    continue
 
-                if "Over/Under" in name:
+                for v in bet.get(
+                    "values",
+                    []
+                ):
 
-                    values = bet.get(
-                        "values",
-                        []
-                    )
+                    if "Over 1.5" in v.get(
+                        "value",
+                        ""
+                    ):
 
-                    for v in values:
-
-                        value = v.get(
-                            "value",
-                            ""
-                        )
-
-                        odd = v.get(
-                            "odd",
-                            None
-                        )
-
-                        if "Over 1.5" in value:
-
-                            try:
-                                return float(odd)
-                            except:
-                                continue
+                        try:
+                            return float(
+                                v.get("odd")
+                            )
+                        except:
+                            pass
 
         return None
 
@@ -550,134 +610,6 @@ def analyze_team(data):
         return 2
 
 # =========================================================
-# COVERAGE RATE
-# =========================================================
-
-def get_coverage_bonus(league_id):
-
-    cursor.execute("""
-
-    SELECT
-
-        matches_checked,
-        stats_available
-
-    FROM league_coverage
-
-    WHERE league_id = ?
-
-    """, (league_id,))
-
-    row = cursor.fetchone()
-
-    if not row:
-        return 0
-
-    checked = row[0]
-    available = row[1]
-
-    if checked < 5:
-        return 0
-
-    rate = (
-        available / checked
-    ) * 100
-
-    if rate >= 90:
-        return 40
-
-    elif rate >= 75:
-        return 25
-
-    elif rate <= 50:
-        return -30
-
-    return 0
-
-# =========================================================
-# UPDATE COVERAGE
-# =========================================================
-
-def update_coverage(
-
-    league_id,
-    league_name,
-    stats_found
-
-):
-
-    cursor.execute("""
-
-    SELECT
-
-        matches_checked,
-        stats_available
-
-    FROM league_coverage
-
-    WHERE league_id = ?
-
-    """, (league_id,))
-
-    row = cursor.fetchone()
-
-    if row:
-
-        checked = row[0] + 1
-        available = row[1]
-
-        if stats_found:
-            available += 1
-
-        cursor.execute("""
-
-        UPDATE league_coverage
-
-        SET
-
-            matches_checked = ?,
-            stats_available = ?
-
-        WHERE league_id = ?
-
-        """, (
-
-            checked,
-            available,
-            league_id
-
-        ))
-
-    else:
-
-        checked = 1
-        available = 1 if stats_found else 0
-
-        cursor.execute("""
-
-        INSERT INTO league_coverage (
-
-            league_id,
-            league_name,
-            matches_checked,
-            stats_available
-
-        )
-
-        VALUES (?, ?, ?, ?)
-
-        """, (
-
-            league_id,
-            league_name,
-            checked,
-            available
-
-        ))
-
-    conn.commit()
-
-# =========================================================
 # SCORE MATCH
 # =========================================================
 
@@ -693,14 +625,6 @@ def score_match(match):
 
         if league_id in OFFENSIVE_PRIORITY:
             score += 50
-
-        coverage_bonus = (
-            get_coverage_bonus(
-                league_id
-            )
-        )
-
-        score += coverage_bonus
 
         kickoff = datetime.fromisoformat(
 
@@ -860,11 +784,8 @@ def selezione_pro():
             "home": home,
             "away": away,
             "league": league,
-            "league_id": (
-                m["league"]["id"]
-            ),
-            "kickoff": kickoff,
-            "score": score
+            "score": score,
+            "kickoff": kickoff
 
         }
 
@@ -878,215 +799,6 @@ def selezione_pro():
         )
 
     send(txt)
-
-# =========================================================
-# SAVE TRIGGER
-# =========================================================
-
-def save_trigger(
-
-    fixture_id,
-    match_name,
-    league,
-
-    minute,
-
-    sog,
-    total_shots,
-    corners,
-
-    xg,
-    momentum,
-    trigger_score,
-
-    goals_at_trigger,
-
-    live_odd
-
-):
-
-    cursor.execute("""
-
-    INSERT INTO trigger_history (
-
-        fixture_id,
-
-        match_name,
-
-        league,
-
-        minute,
-
-        sog,
-
-        total_shots,
-
-        corners,
-
-        xg,
-
-        momentum,
-
-        trigger_score,
-
-        goals_at_trigger,
-
-        live_odd,
-
-        created_at
-
-    )
-
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-
-    """, (
-
-        fixture_id,
-
-        match_name,
-
-        league,
-
-        minute,
-
-        sog,
-
-        total_shots,
-
-        corners,
-
-        xg,
-
-        momentum,
-
-        trigger_score,
-
-        goals_at_trigger,
-
-        live_odd,
-
-        str(datetime.now())
-
-    ))
-
-    conn.commit()
-
-# =========================================================
-# RESULT CHECKER
-# =========================================================
-
-def check_finished_matches():
-
-    cursor.execute("""
-
-    SELECT
-
-        id,
-        fixture_id,
-        goals_at_trigger
-
-    FROM trigger_history
-
-    WHERE result_checked = 0
-
-    LIMIT 5
-
-    """)
-
-    rows = cursor.fetchall()
-
-    for row in rows:
-
-        row_id = row[0]
-
-        fixture_id = row[1]
-
-        goals_at_trigger = row[2]
-
-        try:
-
-            data = api_call(
-
-                f"https://v3.football.api-sports.io/"
-                f"fixtures?id={fixture_id}"
-
-            )
-
-            response = data.get(
-                "response",
-                []
-            )
-
-            if not response:
-                continue
-
-            match = response[0]
-
-            status = (
-                match["fixture"]
-                ["status"]["short"]
-            )
-
-            if status != "FT":
-                continue
-
-            home_goals = (
-                match["goals"]["home"] or 0
-            )
-
-            away_goals = (
-                match["goals"]["away"] or 0
-            )
-
-            final_goals = (
-                home_goals + away_goals
-            )
-
-            final_score = (
-                f"{home_goals}-{away_goals}"
-            )
-
-            goal_after_trigger = 0
-
-            if final_goals > goals_at_trigger:
-                goal_after_trigger = 1
-
-            cursor.execute("""
-
-            UPDATE trigger_history
-
-            SET
-
-                final_goals = ?,
-
-                goal_after_trigger = ?,
-
-                final_score = ?,
-
-                result_checked = 1
-
-            WHERE id = ?
-
-            """, (
-
-                final_goals,
-
-                goal_after_trigger,
-
-                final_score,
-
-                row_id
-
-            ))
-
-            conn.commit()
-
-        except Exception as e:
-
-            log(
-                "RESULT ERROR",
-                e
-            )
 
 # =========================================================
 # LIVE ENGINE
@@ -1125,18 +837,6 @@ def live_scan():
             if not minute:
                 continue
 
-            league_id = (
-                selected_matches[
-                    fixture_id
-                ]["league_id"]
-            )
-
-            league_name = (
-                selected_matches[
-                    fixture_id
-                ]["league"]
-            )
-
             home = (
                 m["teams"]["home"]["name"]
             )
@@ -1149,18 +849,6 @@ def live_scan():
                 f"{home} - {away}"
             )
 
-            home_goals = (
-                m["goals"]["home"] or 0
-            )
-
-            away_goals = (
-                m["goals"]["away"] or 0
-            )
-
-            total_goals = (
-                home_goals + away_goals
-            )
-
             stats_data = get_fixture_statistics(
                 fixture_id
             )
@@ -1170,34 +858,24 @@ def live_scan():
                 []
             )
 
-            # =====================================================
-            # COVERAGE TRACKING
-            # =====================================================
-
             if len(response) < 2:
 
-                update_coverage(
+                live_data_status[
+                    fixture_id
+                ] = {
 
-                    league_id,
-                    league_name,
-                    False
+                    "match": match_name,
+                    "minute": minute,
 
-                )
+                    "sog": False,
+                    "shots": False,
+                    "corners": False,
+                    "xg": False,
+                    "odds": False
 
-                log(
-                    "NO STATS",
-                    match_name
-                )
+                }
 
                 continue
-
-            update_coverage(
-
-                league_id,
-                league_name,
-                True
-
-            )
 
             hs = response[0]["statistics"]
             as_ = response[1]["statistics"]
@@ -1272,90 +950,44 @@ def live_scan():
                 "expected_goals"
             )
 
-            xg = 0
+            xg = False
 
-            try:
-
-                if xg_home:
-                    xg += float(xg_home)
-
-                if xg_away:
-                    xg += float(xg_away)
-
-            except:
-                pass
-
-            momentum = (
-
-                total_shots * 3 +
-
-                shots_on_goal * 5 +
-
-                corners * 2
-
-            )
+            if xg_home or xg_away:
+                xg = True
 
             # =====================================================
-            # HARD FILTERS
+            # LIVE FEED STATUS
             # =====================================================
 
-            if shots_on_goal < 4:
-                continue
+            live_data_status[
+                fixture_id
+            ] = {
 
-            trigger_score = 0
+                "match": match_name,
 
-            # =====================================================
-            # SCORE ENGINE
-            # =====================================================
+                "minute": minute,
 
-            if total_shots >= 10:
-                trigger_score += 20
+                "sog": shots_on_goal > 0,
 
-            if total_shots >= 14:
-                trigger_score += 10
+                "shots": total_shots > 0,
 
-            if shots_on_goal >= 4:
-                trigger_score += 25
+                "corners": corners > 0,
 
-            if shots_on_goal >= 6:
-                trigger_score += 15
+                "xg": xg,
 
-            if corners >= 6:
-                trigger_score += 15
+                "odds": False
 
-            if corners >= 9:
-                trigger_score += 10
-
-            if momentum >= 60:
-                trigger_score += 20
-
-            if momentum >= 80:
-                trigger_score += 10
+            }
 
             # =====================================================
-            # XG BONUS ONLY
+            # ODDS ONLY GOOD MATCHES
             # =====================================================
-
-            if xg >= 1.2:
-                trigger_score += 15
-
-            if xg >= 1.8:
-                trigger_score += 10
-
-            if xg >= 2.5:
-                trigger_score += 10
-
-            # =====================================================
-            # ODDS ONLY FOR GOOD MATCHES
-            # =====================================================
-
-            live_odd = None
 
             if (
 
                 minute >= 60
 
-                and trigger_score >= 40
+                and total_shots >= 8
 
             ):
 
@@ -1367,123 +999,11 @@ def live_scan():
                     odds_data
                 )
 
-                odds_score = odds_pressure_score(
-                    live_odd
-                )
+                if live_odd:
 
-                trigger_score += odds_score
-
-            # =====================================================
-            # DEAD MARKET FILTER
-            # =====================================================
-
-            if live_odd:
-
-                if live_odd >= 3.50:
-                    continue
-
-            required_score = 65
-
-            if minute >= 75:
-                required_score = 60
-
-            if minute >= 82:
-                required_score = 55
-
-            log(
-
-                "LIVE",
-
-                match_name,
-
-                "MIN", minute,
-
-                "GOALS", total_goals,
-
-                "SOG", shots_on_goal,
-
-                "TS", total_shots,
-
-                "CORNERS", corners,
-
-                "XG", xg,
-
-                "MOMENTUM", momentum,
-
-                "ODD", live_odd,
-
-                "TRIGGER", trigger_score
-
-            )
-
-            trigger = False
-
-            if (
-
-                minute >= 60
-
-                and total_goals <= 1
-
-                and trigger_score >= required_score
-
-            ):
-
-                trigger = True
-
-            if trigger:
-
-                if not triggered_matches.get(
-                    fixture_id
-                ):
-
-                    triggered_matches[
+                    live_data_status[
                         fixture_id
-                    ] = True
-
-                    send(
-
-                        f"⚡ OVER 1.5 ST\n\n"
-
-                        f"{match_name}\n"
-
-                        f"🕒 {minute}'\n"
-
-                        f"⚽ Goals {total_goals}\n\n"
-
-                        f"🎯 SOG {shots_on_goal}\n"
-                        f"📈 Total Shots {total_shots}\n"
-                        f"🚩 Corners {corners}\n"
-                        f"📊 xG {round(xg,2)}\n"
-                        f"🧠 Momentum {momentum}\n"
-                        f"💰 Live Odd {live_odd}\n"
-                        f"🔥 Trigger Score {trigger_score}"
-
-                    )
-
-                    save_trigger(
-
-                        fixture_id,
-                        match_name,
-
-                        selected_matches[
-                            fixture_id
-                        ]["league"],
-
-                        minute,
-
-                        shots_on_goal,
-                        total_shots,
-                        corners,
-
-                        xg,
-                        momentum,
-                        trigger_score,
-
-                        total_goals,
-
-                        live_odd
-
-                    )
+                    ]["odds"] = True
 
         except Exception as e:
 
@@ -1512,8 +1032,6 @@ def loop():
                 selezione_pro()
 
             live_scan()
-
-            check_finished_matches()
 
             time.sleep(LIVE_INTERVAL)
 
@@ -1549,7 +1067,7 @@ def handle(msg):
 
             msg,
 
-            "🚀 BOT TRADER PRO ELITE AI ONLINE"
+            "🚀 BOT ULTRA STABLE ONLINE"
 
         )
 
@@ -1562,217 +1080,61 @@ def handle(msg):
         selezione_pro()
 
     # =====================================================
-    # TODAY
+    # LIVECHECK
     # =====================================================
 
-    elif text.startswith("/today"):
+    elif text.startswith("/livecheck"):
 
-        if not selected_matches:
+        if not live_data_status:
 
             bot.reply_to(
                 msg,
-                "Nessuna partita"
+                "Nessun dato live"
             )
 
         else:
 
             txt = (
-                "📅 PARTITE ATTIVE\n\n"
+                "📡 LIVE FEED CHECK\n\n"
             )
 
-            for _, v in selected_matches.items():
+            for _, d in live_data_status.items():
+
+                quality = 0
+
+                if d["sog"]:
+                    quality += 25
+
+                if d["shots"]:
+                    quality += 20
+
+                if d["corners"]:
+                    quality += 15
+
+                if d["xg"]:
+                    quality += 20
+
+                if d["odds"]:
+                    quality += 20
 
                 txt += (
 
-                    f"{v['home']} - "
-                    f"{v['away']}\n"
+                    f"{d['match']}\n"
 
-                    f"{v['league']}\n"
+                    f"🕒 {d['minute']}'\n\n"
 
-                    f"🕒 {v['kickoff']}\n"
+                    f"{'✅' if d['sog'] else '❌'} SOG\n"
 
-                    f"📈 Score "
-                    f"{v['score']}\n\n"
+                    f"{'✅' if d['shots'] else '❌'} Shots\n"
 
-                )
+                    f"{'✅' if d['corners'] else '❌'} Corners\n"
 
-            bot.reply_to(
-                msg,
-                txt
-            )
+                    f"{'✅' if d['xg'] else '❌'} xG\n"
 
-    # =====================================================
-    # PERFORMANCE
-    # =====================================================
+                    f"{'✅' if d['odds'] else '❌'} Odds\n\n"
 
-    elif text.startswith("/performance"):
-
-        cursor.execute("""
-
-        SELECT
-
-            COUNT(*),
-
-            SUM(goal_after_trigger)
-
-        FROM trigger_history
-
-        WHERE result_checked = 1
-
-        """)
-
-        row = cursor.fetchone()
-
-        total = row[0] or 0
-
-        wins = row[1] or 0
-
-        if total == 0:
-
-            bot.reply_to(
-                msg,
-                "Nessun dato"
-            )
-
-        else:
-
-            rate = round(
-                wins / total * 100,
-                2
-            )
-
-            bot.reply_to(
-
-                msg,
-
-                f"📊 PERFORMANCE\n\n"
-
-                f"Triggers: {total}\n"
-                f"Goals After Trigger: {wins}\n"
-                f"Hit Rate: {rate}%"
-
-            )
-
-    # =====================================================
-    # ODDS PERFORMANCE
-    # =====================================================
-
-    elif text.startswith("/oddsperf"):
-
-        cursor.execute("""
-
-        SELECT
-
-            COUNT(*),
-
-            AVG(live_odd),
-
-            SUM(goal_after_trigger)
-
-        FROM trigger_history
-
-        WHERE
-
-            result_checked = 1
-
-            AND live_odd IS NOT NULL
-
-        """)
-
-        row = cursor.fetchone()
-
-        total = row[0] or 0
-
-        avg_odd = round(
-            row[1] or 0,
-            2
-        )
-
-        wins = row[2] or 0
-
-        if total == 0:
-
-            bot.reply_to(
-                msg,
-                "Nessun dato"
-            )
-
-        else:
-
-            rate = round(
-                wins / total * 100,
-                2
-            )
-
-            bot.reply_to(
-
-                msg,
-
-                f"💰 ODDS PERFORMANCE\n\n"
-
-                f"Triggers: {total}\n"
-
-                f"Average Odd: {avg_odd}\n"
-
-                f"Goals After Trigger: {wins}\n"
-
-                f"Hit Rate: {rate}%"
-
-            )
-
-    # =====================================================
-    # COVERAGE
-    # =====================================================
-
-    elif text.startswith("/coverage"):
-
-        cursor.execute("""
-
-        SELECT
-
-            league_name,
-            matches_checked,
-            stats_available
-
-        FROM league_coverage
-
-        ORDER BY stats_available DESC
-
-        LIMIT 10
-
-        """)
-
-        rows = cursor.fetchall()
-
-        if not rows:
-
-            bot.reply_to(
-                msg,
-                "Nessun dato"
-            )
-
-        else:
-
-            txt = (
-                "📡 LIVE COVERAGE\n\n"
-            )
-
-            for r in rows:
-
-                league = r[0]
-                checked = r[1]
-                available = r[2]
-
-                rate = round(
-                    available / checked * 100,
-                    1
-                )
-
-                txt += (
-
-                    f"{league}\n"
-
-                    f"Coverage: {rate}%\n\n"
+                    f"📊 Feed Quality "
+                    f"{quality}%\n\n"
 
                 )
 
@@ -1836,7 +1198,7 @@ def handle(msg):
 # =========================================================
 
 print(
-    "🚀 BOT TRADER PRO ELITE AI OPTIMIZED STARTED"
+    "🚀 BOT ULTRA STABLE STARTED"
 )
 
 threading.Thread(
