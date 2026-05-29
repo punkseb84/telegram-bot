@@ -72,12 +72,9 @@ bot.set_my_commands([
     BotCommand("lastscan", "Ultimi trigger"),
     BotCommand("exportcsv", "Esporta CSV"),
 
-    BotCommand("id", "Mostra Chat ID")
+    BotCommand("id", "Mostra Chat ID"),
 
-    BotCommand(
-    "livefeed",
-    "Statistiche live"
-)
+    BotCommand("livefeed", "Statistiche live")
 
 ])
 
