@@ -45,7 +45,6 @@ from telegram_commands import (
 from database import cursor
 
 from telegram_commands import (
-    ...
     cmd_livefeed
 )
 
