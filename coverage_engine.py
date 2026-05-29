@@ -4,10 +4,8 @@
 # =========================================================
 
 from database import (
-
     update_coverage,
     get_coverage
-
 )
 
 # =========================================================
@@ -23,21 +21,15 @@ COVERAGE_PENALTY = 30
 # =========================================================
 
 def register_live_feed(
-
     league_id,
     league_name,
-
     has_stats
-
 ):
 
     update_coverage(
-
         league_id,
         league_name,
-
         has_stats
-
     )
 
 # =========================================================
@@ -49,6 +41,22 @@ def coverage_modifier(league_id):
     coverage = get_coverage(
         league_id
     )
+
+    # ----------------------------------
+    # UNKNOWN
+    # ----------------------------------
+
+    if coverage == 0:
+
+        return {
+
+            "coverage": 0,
+
+            "modifier": 0,
+
+            "status": "UNKNOWN"
+
+        }
 
     # ----------------------------------
     # BONUS
@@ -86,27 +94,15 @@ def coverage_modifier(league_id):
     # PENALTY
     # ----------------------------------
 
-   if coverage == 0:
+    if coverage >= COVERAGE_PENALTY:
 
-    return {
-        "coverage": 0,
-        "modifier": 0,
-        "status": "UNKNOWN"
-    }
+        return {
 
-if coverage >= COVERAGE_PENALTY:
+            "coverage": coverage,
 
-    return {
-        "coverage": coverage,
-        "modifier": -20,
-        "status": "PENALTY"
-    }
+            "modifier": -20,
 
-return {
-    "coverage": coverage,
-    "modifier": -999,
-    "status": "EXCLUDED"
-}
+            "status": "PENALTY"
 
         }
 
@@ -134,18 +130,17 @@ def league_allowed(league_id):
         league_id
     )
 
-    return info["status"] != "EXCLUDED"
+    return (
+        info["status"] != "EXCLUDED"
+    )
 
 # =========================================================
 # PREMATCH BONUS
 # =========================================================
 
 def apply_coverage_bonus(
-
     league_id,
-
     current_score
-
 ):
 
     info = coverage_modifier(
@@ -157,11 +152,8 @@ def apply_coverage_bonus(
         return None
 
     return (
-
         current_score +
-
         info["modifier"]
-
     )
 
 # =========================================================
@@ -169,11 +161,8 @@ def apply_coverage_bonus(
 # =========================================================
 
 def coverage_report_line(
-
     league_name,
-
     league_id
-
 ):
 
     info = coverage_modifier(
