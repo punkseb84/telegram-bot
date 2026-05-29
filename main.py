@@ -397,17 +397,6 @@ def exportcsv_cmd(message):
 
             )
 
-    @bot.message_handler(commands=["livefeed"])
-def livefeed_cmd(message):
-
-    bot.reply_to(
-
-        message,
-
-        cmd_livefeed()
-
-    )
-
     except Exception as e:
 
         bot.reply_to(
@@ -417,6 +406,17 @@ def livefeed_cmd(message):
             f"Errore export CSV: {e}"
 
         )
+
+@bot.message_handler(commands=["livefeed"])
+def livefeed_cmd(message):
+
+    bot.reply_to(
+
+        message,
+
+        cmd_livefeed()
+
+    )
 
 # =========================================================
 # START THREADS
