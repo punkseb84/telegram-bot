@@ -26,6 +26,10 @@ from performance_engine import (
 
 )
 
+from live_engine import (
+    get_live_feed_report
+)
+
 # =========================================================
 # COVERAGE
 # =========================================================
@@ -180,3 +184,10 @@ def cmd_livecheck(selected_matches):
 def cmd_exportcsv():
 
     return export_csv()
+# =========================================================
+# LIVE FEED
+# =========================================================
+
+def cmd_livefeed():
+
+    return get_live_feed_report()
