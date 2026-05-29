@@ -1,3 +1,4 @@
+```python
 # =========================================================
 # main.py
 # BOT TRADER PRO ELITE AI
@@ -7,8 +8,12 @@ import time
 import threading
 
 import telebot
+from telebot.types import BotCommand
 
-from config import BOT_TOKEN
+from config import (
+    BOT_TOKEN,
+    CHAT_ID
+)
 
 from prematch_engine import (
     select_matches
@@ -44,9 +49,29 @@ from database import cursor
 # TELEGRAM
 # =========================================================
 
-bot = telebot.TeleBot(
-    BOT_TOKEN
-)
+bot = telebot.TeleBot(BOT_TOKEN)
+
+bot.set_my_commands([
+
+    BotCommand("start", "Avvia il bot"),
+    BotCommand("oggi", "Selezione partite"),
+    BotCommand("today", "Selezione partite"),
+
+    BotCommand("livecheck", "Controllo live"),
+    BotCommand("coverage", "Coverage leghe"),
+
+    BotCommand("performance", "Performance"),
+    BotCommand("oddsperf", "Performance quote"),
+
+    BotCommand("api", "API status"),
+    BotCommand("debug", "Debug sistema"),
+
+    BotCommand("lastscan", "Ultimi trigger"),
+    BotCommand("exportcsv", "Esporta CSV"),
+
+    BotCommand("id", "Mostra Chat ID")
+
+])
 
 # =========================================================
 # GLOBALS
@@ -54,77 +79,99 @@ bot = telebot.TeleBot(
 
 selected_matches = {}
 
-last_selection_day = None
-
 # =========================================================
-# SEND
+# SEND MESSAGE
 # =========================================================
 
 def send_message(text):
 
     try:
 
+        if not CHAT_ID:
+
+            print(
+                "[TELEGRAM] CHAT_ID MISSING"
+            )
+            return
+
         bot.send_message(
-
-            CHAT_ID,
-
+            int(CHAT_ID),
             text
-
         )
 
     except Exception as e:
 
         print(
-
             "[TELEGRAM]",
-
             e
-
         )
 
 # =========================================================
-# PREMATCH JOB
+# DAILY SELECTION
 # =========================================================
 
 def daily_selection():
 
     global selected_matches
 
-    selected_matches.clear()
+    try:
 
-    matches = select_matches()
+        selected_matches.clear()
 
-    txt = "📋 TODAY SELECTION\n\n"
+        matches = select_matches()
 
-    for score, match in matches:
+        txt = "📋 TODAY SELECTION\n\n"
 
-        fixture_id = (
-            match["fixture"]["id"]
+        if not matches:
+
+            txt += (
+                "⚠ Nessuna partita trovata"
+            )
+
+            send_message(txt)
+
+            return
+
+        for score, match in matches:
+
+            fixture_id = (
+                match["fixture"]["id"]
+            )
+
+            home = (
+                match["teams"]["home"]["name"]
+            )
+
+            away = (
+                match["teams"]["away"]["name"]
+            )
+
+            name = f"{home} - {away}"
+
+            selected_matches[
+                fixture_id
+            ] = name
+
+            txt += (
+
+                f"{name}\n"
+                f"Score {score}\n\n"
+
+            )
+
+        send_message(txt)
+
+        print(
+            "[PREMATCH] SELECTED",
+            len(selected_matches)
         )
 
-        home = (
-            match["teams"]["home"]["name"]
+    except Exception as e:
+
+        print(
+            "[PREMATCH ERROR]",
+            e
         )
-
-        away = (
-            match["teams"]["away"]["name"]
-        )
-
-        name = f"{home} - {away}"
-
-        selected_matches[
-            fixture_id
-        ] = name
-
-        txt += (
-
-            f"{name}\n"
-
-            f"Score {score}\n\n"
-
-        )
-
-    send_message(txt)
 
 # =========================================================
 # LIVE THREAD
@@ -147,11 +194,8 @@ def live_worker():
         except Exception as e:
 
             print(
-
                 "[LIVE]",
-
                 e
-
             )
 
         time.sleep(30)
@@ -187,11 +231,8 @@ def nightly_worker():
         except Exception as e:
 
             print(
-
                 "[NIGHTLY]",
-
                 e
-
             )
 
         time.sleep(60)
@@ -213,7 +254,20 @@ def start_cmd(message):
 
 # ---------------------------------------------------------
 
-@bot.message_handler(commands=["oggi","today"])
+@bot.message_handler(commands=["id"])
+def id_cmd(message):
+
+    bot.reply_to(
+
+        message,
+
+        f"Chat ID: {message.chat.id}"
+
+    )
+
+# ---------------------------------------------------------
+
+@bot.message_handler(commands=["oggi", "today"])
 def today_cmd(message):
 
     daily_selection()
@@ -324,20 +378,32 @@ def livecheck_cmd(message):
 @bot.message_handler(commands=["exportcsv"])
 def exportcsv_cmd(message):
 
-    file = cmd_exportcsv()
+    try:
 
-    with open(file, "rb") as f:
+        file = cmd_exportcsv()
 
-        bot.send_document(
+        with open(file, "rb") as f:
 
-            message.chat.id,
+            bot.send_document(
 
-            f
+                message.chat.id,
+
+                f
+
+            )
+
+    except Exception as e:
+
+        bot.reply_to(
+
+            message,
+
+            f"Errore export CSV: {e}"
 
         )
 
 # =========================================================
-# BOOT
+# START THREADS
 # =========================================================
 
 threading.Thread(
@@ -357,12 +423,22 @@ threading.Thread(
 ).start()
 
 # =========================================================
+# AUTO SELECTION DAILY
+# =========================================================
+
+daily_selection()
+
+# =========================================================
 # POLLING RECOVERY
 # =========================================================
 
 while True:
 
     try:
+
+        print(
+            "[BOT] START POLLING"
+        )
 
         bot.infinity_polling(
 
@@ -375,11 +451,9 @@ while True:
     except Exception as e:
 
         print(
-
             "[POLLING]",
-
             e
-
         )
 
         time.sleep(15)
+```
