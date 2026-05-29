@@ -32,20 +32,20 @@ MAX_SELECTED_MATCHES = 3
 
 LEAGUES = [
 
-    39,140,135,78,61,
-    88,94,144,207,
-    119,113,179,
-    98,292,197,
-    253,188,
+    39, 140, 135, 78, 61,
+    88, 94, 144, 207,
+    119, 113, 179,
+    98, 292, 197,
+    253, 188,
 
-    72,73,74,
-    79,141,136,
-    62,244,
+    72, 73, 74,
+    79, 141, 136,
+    62, 244,
 
-    103,104,105,
-    106,107,108,
-    109,110,111,
-    112,114,115
+    103, 104, 105,
+    106, 107, 108,
+    109, 110, 111,
+    112, 114, 115
 
 ]
 
@@ -146,38 +146,23 @@ def score_match(match):
             match["teams"]["away"]["id"]
         )
 
-        # ------------------------
-        # LEAGUE BONUS
-        # ------------------------
-
         if league_id in OFFENSIVE_PRIORITY:
-
             score += 50
 
-        # ------------------------
-        # TEAM STATS
-        # ------------------------
-
         print(
-
             "[PREMATCH] ANALYZING",
-
             home_id,
             away_id,
-
             league_id,
             season
-
         )
 
         home_stats = analyze_team(
 
             get_team_stats(
-
                 home_id,
                 league_id,
                 season
-
             )
 
         )
@@ -185,38 +170,30 @@ def score_match(match):
         away_stats = analyze_team(
 
             get_team_stats(
-
                 away_id,
                 league_id,
                 season
-
             )
 
         )
 
         score += (
-
             home_stats +
             away_stats
-
         ) * 10
 
-        # ------------------------
-        # COVERAGE BONUS
-        # ------------------------
-
         score = apply_coverage_bonus(
-
             league_id,
             score
-
         )
 
         if score is None:
-
             return 0
 
-        return round(score, 2)
+        return round(
+            score,
+            2
+        )
 
     except Exception as e:
 
@@ -244,10 +221,8 @@ def select_matches():
         ).date()
 
         data = api_call(
-
             "https://v3.football.api-sports.io/"
             f"fixtures?date={today}"
-
         )
 
         matches = data.get(
@@ -256,18 +231,19 @@ def select_matches():
         )
 
         print(
-
             "[PREMATCH] MATCHES",
-
             len(matches)
-
         )
 
         scored = []
-
         fallback = []
+        candidates = []
 
         now = datetime.now(tz)
+
+        # =====================================
+        # PRE FILTER
+        # =====================================
 
         for match in matches:
 
@@ -281,28 +257,54 @@ def select_matches():
                     continue
 
                 kickoff = datetime.fromisoformat(
-
                     match["fixture"]["date"]
-
                     .replace(
                         "Z",
                         "+00:00"
                     )
-
                 ).astimezone(tz)
 
                 if not (
-
                     START_HOUR
-
                     <= kickoff.hour
-
                     <= END_HOUR
-
                 ):
                     continue
 
-                fallback.append(match)
+                hours_to_kickoff = (
+                    kickoff - now
+                ).total_seconds() / 3600
+
+                if hours_to_kickoff > 12:
+                    continue
+
+                candidates.append(
+                    match
+                )
+
+            except Exception as e:
+
+                print(
+                    "[PREMATCH FILTER ERROR]",
+                    e
+                )
+
+        print(
+            "[PREMATCH] CANDIDATES",
+            len(candidates)
+        )
+
+        # =====================================
+        # SCORE
+        # =====================================
+
+        for match in candidates:
+
+            try:
+
+                fallback.append(
+                    match
+                )
 
                 score = score_match(
                     match
@@ -312,36 +314,37 @@ def select_matches():
                     continue
 
                 scored.append(
-
                     (
                         score,
                         match
                     )
-
                 )
 
             except Exception as e:
 
                 print(
-                    "[PREMATCH ERROR]",
+                    "[PREMATCH SCORE ERROR]",
                     e
                 )
 
+        print(
+            "[PREMATCH] SCORED",
+            len(scored)
+        )
+
+        print(
+            "[PREMATCH] FALLBACK",
+            len(fallback)
+        )
+
         scored.sort(
-
             key=lambda x: x[0],
-
             reverse=True
-
         )
 
         selected = scored[
             :MAX_SELECTED_MATCHES
         ]
-
-        # ------------------------
-        # FALLBACK
-        # ------------------------
 
         if len(selected) == 0:
 
@@ -349,25 +352,22 @@ def select_matches():
                 "[PREMATCH] FALLBACK MODE"
             )
 
+            selected = []
+
             for match in fallback[
                 :MAX_SELECTED_MATCHES
             ]:
 
                 selected.append(
-
                     (
                         0,
                         match
                     )
-
                 )
 
         print(
-
             "[PREMATCH] SELECTED",
-
             len(selected)
-
         )
 
         return selected
