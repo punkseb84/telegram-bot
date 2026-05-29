@@ -50,7 +50,7 @@ LEAGUES = [
 ]
 
 # =========================================================
-# OFFENSIVE PRIORITY
+# OFFENSIVE LEAGUES
 # =========================================================
 
 OFFENSIVE_PRIORITY = [
@@ -78,27 +78,45 @@ def analyze_team(data):
 
     try:
 
+        response = data.get(
+            "response",
+            {}
+        )
+
         played = (
-            data["response"]
-            ["fixtures"]["played"]["total"]
+            response["fixtures"]
+            ["played"]
+            ["total"]
         )
 
         gf = (
-            data["response"]
-            ["goals"]["for"]["total"]["total"]
+            response["goals"]
+            ["for"]
+            ["total"]
+            ["total"]
         )
 
         ga = (
-            data["response"]
-            ["goals"]["against"]["total"]["total"]
+            response["goals"]
+            ["against"]
+            ["total"]
+            ["total"]
         )
 
         if played == 0:
             return 2
 
-        return (gf + ga) / played
+        return round(
+            (gf + ga) / played,
+            2
+        )
 
-    except:
+    except Exception as e:
+
+        print(
+            "[TEAM ANALYZE ERROR]",
+            e
+        )
 
         return 2
 
@@ -120,35 +138,6 @@ def score_match(match):
             match["league"]["season"]
         )
 
-        # -------------------------
-        # LEAGUE BONUS
-        # -------------------------
-
-        if league_id in OFFENSIVE_PRIORITY:
-
-            score += 50
-
-        # -------------------------
-        # KICKOFF BONUS
-        # -------------------------
-
-        kickoff = datetime.fromisoformat(
-
-            match["fixture"]["date"].replace(
-                "Z",
-                "+00:00"
-            )
-
-        ).astimezone(tz)
-
-        if 17 <= kickoff.hour <= 20:
-
-            score += 20
-
-        # -------------------------
-        # TEAM STATS
-        # -------------------------
-
         home_id = (
             match["teams"]["home"]["id"]
         )
@@ -157,14 +146,36 @@ def score_match(match):
             match["teams"]["away"]["id"]
         )
 
+        # ------------------------
+        # LEAGUE BONUS
+        # ------------------------
+
+        if league_id in OFFENSIVE_PRIORITY:
+
+            score += 50
+
+        # ------------------------
+        # TEAM STATS
+        # ------------------------
+
+        print(
+
+            "[PREMATCH] ANALYZING",
+
+            home_id,
+            away_id,
+
+            league_id,
+            season
+
+        )
+
         home_stats = analyze_team(
 
             get_team_stats(
 
                 home_id,
-
                 league_id,
-
                 season
 
             )
@@ -176,9 +187,7 @@ def score_match(match):
             get_team_stats(
 
                 away_id,
-
                 league_id,
-
                 season
 
             )
@@ -188,19 +197,17 @@ def score_match(match):
         score += (
 
             home_stats +
-
             away_stats
 
         ) * 10
 
-        # -------------------------
-        # COVERAGE
-        # -------------------------
+        # ------------------------
+        # COVERAGE BONUS
+        # ------------------------
 
         score = apply_coverage_bonus(
 
             league_id,
-
             score
 
         )
@@ -209,18 +216,12 @@ def score_match(match):
 
             return 0
 
-        return round(
-
-            score,
-
-            2
-
-        )
+        return round(score, 2)
 
     except Exception as e:
 
         print(
-            "[PREMATCH] SCORE ERROR",
+            "[MATCH SCORE ERROR]",
             e
         )
 
@@ -232,152 +233,150 @@ def score_match(match):
 
 def select_matches():
 
-    today = datetime.now(
-        tz
-    ).date()
-
     print(
         "[PREMATCH] START"
     )
 
-    data = api_call(
+    try:
 
-        f"https://v3.football.api-sports.io/"
-        f"fixtures?date={today}"
+        today = datetime.now(
+            tz
+        ).date()
 
-    )
+        data = api_call(
 
-    matches = data.get(
-        "response",
-        []
-    )
+            "https://v3.football.api-sports.io/"
+            f"fixtures?date={today}"
 
-    print(
-
-        "[PREMATCH] MATCHES",
-
-        len(matches)
-
-    )
-
-    scored = []
-    fallback = []
-
-    now = datetime.now(tz)
-
-    for match in matches:
-
-        try:
-
-            league_id = (
-                match["league"]["id"]
-            )
-
-            if league_id not in LEAGUES:
-
-                continue
-
-            kickoff = datetime.fromisoformat(
-
-                match["fixture"]["date"].replace(
-                    "Z",
-                    "+00:00"
-
-                )
-
-            ).astimezone(tz)
-
-            delta = (
-                kickoff - now
-            ).total_seconds()
-
-            if delta < -1800:
-
-                continue
-
-            if not (
-
-                START_HOUR
-
-                <= kickoff.hour
-
-                <= END_HOUR
-
-            ):
-
-                continue
-
-            fallback.append(
-                match
-            )
-
-            score = score_match(
-                match
-            )
-
-            if score <= 0:
-
-                continue
-
-            scored.append(
-
-                (
-                    score,
-                    match
-                )
-
-            )
-
-        except Exception as e:
-
-            print(
-                "[PREMATCH] ERROR",
-                e
-            )
-
-    scored.sort(
-
-        key=lambda x: x[0],
-
-        reverse=True
-
-    )
-
-    selected = scored[
-        :MAX_SELECTED_MATCHES
-    ]
-
-    # --------------------------------
-    # FALLBACK MODE
-    # --------------------------------
-
-    if len(selected) == 0:
-
-        print(
-            "[PREMATCH] FALLBACK MODE"
         )
 
-        selected = []
+        matches = data.get(
+            "response",
+            []
+        )
 
-        for match in fallback[
-            :MAX_SELECTED_MATCHES
-        ]:
+        print(
 
-            selected.append(
+            "[PREMATCH] MATCHES",
 
-                (
-                    0,
+            len(matches)
+
+        )
+
+        scored = []
+
+        fallback = []
+
+        now = datetime.now(tz)
+
+        for match in matches:
+
+            try:
+
+                league_id = (
+                    match["league"]["id"]
+                )
+
+                if league_id not in LEAGUES:
+                    continue
+
+                kickoff = datetime.fromisoformat(
+
+                    match["fixture"]["date"]
+
+                    .replace(
+                        "Z",
+                        "+00:00"
+                    )
+
+                ).astimezone(tz)
+
+                if not (
+
+                    START_HOUR
+
+                    <= kickoff.hour
+
+                    <= END_HOUR
+
+                ):
+                    continue
+
+                fallback.append(match)
+
+                score = score_match(
                     match
                 )
 
+                if score <= 0:
+                    continue
+
+                scored.append(
+
+                    (
+                        score,
+                        match
+                    )
+
+                )
+
+            except Exception as e:
+
+                print(
+                    "[PREMATCH ERROR]",
+                    e
+                )
+
+        scored.sort(
+
+            key=lambda x: x[0],
+
+            reverse=True
+
+        )
+
+        selected = scored[
+            :MAX_SELECTED_MATCHES
+        ]
+
+        # ------------------------
+        # FALLBACK
+        # ------------------------
+
+        if len(selected) == 0:
+
+            print(
+                "[PREMATCH] FALLBACK MODE"
             )
 
-    print(
+            for match in fallback[
+                :MAX_SELECTED_MATCHES
+            ]:
 
-        "[PREMATCH] SELECTED",
+                selected.append(
 
-        len(selected)
+                    (
+                        0,
+                        match
+                    )
 
-    )
+                )
 
-    return selected
+        print(
+
+            "[PREMATCH] SELECTED",
+
+            len(selected)
+
+        )
+
+        return selected
+
+    except Exception as e:
+
+        print(
+            "[PREMATCH FATAL]",
+            e
+        )
+
+        return []
