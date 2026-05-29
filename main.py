@@ -44,6 +44,11 @@ from telegram_commands import (
 
 from database import cursor
 
+from telegram_commands import (
+    ...
+    cmd_livefeed
+)
+
 # =========================================================
 # TELEGRAM
 # =========================================================
@@ -69,6 +74,11 @@ bot.set_my_commands([
     BotCommand("exportcsv", "Esporta CSV"),
 
     BotCommand("id", "Mostra Chat ID")
+
+    BotCommand(
+    "livefeed",
+    "Statistiche live"
+)
 
 ])
 
@@ -390,6 +400,17 @@ def exportcsv_cmd(message):
                 f
 
             )
+
+    @bot.message_handler(commands=["livefeed"])
+def livefeed_cmd(message):
+
+    bot.reply_to(
+
+        message,
+
+        cmd_livefeed()
+
+    )
 
     except Exception as e:
 
