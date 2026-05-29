@@ -86,15 +86,27 @@ def coverage_modifier(league_id):
     # PENALTY
     # ----------------------------------
 
-    if coverage >= COVERAGE_PENALTY:
+   if coverage == 0:
 
-        return {
+    return {
+        "coverage": 0,
+        "modifier": 0,
+        "status": "UNKNOWN"
+    }
 
-            "coverage": coverage,
+if coverage >= COVERAGE_PENALTY:
 
-            "modifier": -20,
+    return {
+        "coverage": coverage,
+        "modifier": -20,
+        "status": "PENALTY"
+    }
 
-            "status": "PENALTY"
+return {
+    "coverage": coverage,
+    "modifier": -999,
+    "status": "EXCLUDED"
+}
 
         }
 
