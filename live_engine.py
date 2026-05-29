@@ -581,3 +581,50 @@ def live_scan(
             fixture["league"]["name"]
 
         )
+
+# =========================================================
+# LIVE FEED REPORT
+# =========================================================
+
+def get_live_feed_report():
+
+    if not live_feed_cache:
+
+        return (
+            "⚠ Nessuna partita live "
+            "monitorata"
+        )
+
+    txt = "📡 LIVE FEED\n\n"
+
+    for fixture_id, data in live_feed_cache.items():
+
+        txt += (
+
+            f"{data['home']} - "
+            f"{data['away']}\n\n"
+
+            f"🕒 {data['minute']}'\n"
+
+            f"⚽ Goals "
+            f"{data['goals']}\n\n"
+
+            f"🎯 SOG "
+            f"{data['sog']}\n"
+
+            f"📈 Shots "
+            f"{data['shots']}\n"
+
+            f"🚩 Corners "
+            f"{data['corners']}\n\n"
+
+            f"📡 Feed "
+            f"{data['feed']}%\n\n"
+
+        )
+
+    return txt
+
+
+
+
