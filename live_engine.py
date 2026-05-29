@@ -348,6 +348,30 @@ def process_match(
 
     )
 
+
+    live_feed_cache[fixture_id] = {
+
+    "home": home,
+    "away": away,
+
+    "minute": minute,
+
+    "goals": goals,
+
+    "sog": sog,
+    "shots": shots,
+    "corners": corners,
+
+    "passes": passes,
+
+    "xg": xg,
+
+    "odd": odd,
+
+    "feed": feed
+
+}
+
     # --------------------------------
     # REPORT 60'
     # --------------------------------
